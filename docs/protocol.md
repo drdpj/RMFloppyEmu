@@ -507,7 +507,12 @@ Whether the 480Z ever sends with RTS down is an open question.
       (see "Copy-protected discs"); the repaired images boot.
 - [ ] Where on the original track the second sector 08 sits, and the exact interleave. It only matters if the timing
       of a real drive with our emulated rotation fails to reach both copies. Verify on real hardware.
-- [ ] Why the Dragon World HFE is reported to load from a Gotek.
+- [ ] Why the Dragon World HFE is reported to load from a Gotek. The old HFEs here were synthesised from the
+      incomplete IMDs and lack the second sector 08, so they don't load from this unit either (owner, 2026-11-21).
+      **HFEs made from the rebuilt flux load and run** (owner, 2026-11-21, on the Pico): `gw convert --tracks
+      c=0-39:h=0-1 …_rebuilt_300rpm.scp …_rebuilt.hfe::bitrate=250` (Greaseweazle). They hold both 08s and both
+      29s, and match the IMDs rebuilt from the same captures in all 734 sectors (`tests/check_hfe_vs_imd.py`). Still
+      open: compare the Gotek's file with ours (md5 above).
 - [x] How logical track numbers map to cylinder and side: the track byte is the cylinder, and the side is bit 0 of the
       drive byte, each side being a CP/M drive of its own (A:/C:, B:/D:; "The drive byte" above, from the user guide
       and the traces, 2026-11-21).

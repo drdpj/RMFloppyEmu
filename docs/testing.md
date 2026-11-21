@@ -332,7 +332,7 @@ tests/hil/run_mame_linked.py --restore                              # put the ca
 | 480Z disk images | `testdata/images/` (copies of your own) | levels 2–4 |
 | Repaired 4MATION IMDs that boot (`*_both-sector-08.IMD`, made with `tools/imd/add_duplicate_sector.py`); masters in `background-docs/repaired/` | `testdata/images/` | level 2 (MAME boot), level 4 |
 | SCP captures of the 4MATION originals (`480Z_4MATION_*_1985.scp`, read at 360 rpm) | `testdata/images/` (copied from `background-docs/`) | `scp_4mation_*` (level 1, label `realdata`) |
-| Rebuilt 4MATION images (`*_rebuilt_*rpm.scp`, `*_rebuilt.IMD`); masters in `background-docs/repaired/` | `testdata/images/` | level 2 (MAME boot), level 4 |
+| Rebuilt 4MATION images (`*_rebuilt_*rpm.scp`, `*_rebuilt.IMD`, and `*_rebuilt.hfe` made from the 300 rpm SCP with Greaseweazle's `gw convert`, which load on the unit); masters in `background-docs/repaired/` | `testdata/images/` | level 2 (MAME boot), level 4 |
 | Protected 4MATION discs, HFE and IMD of each (`480Z_4MATION_Dragon_World_1985`, `480Z_4MATION_Flowers_of_Crystal_1985`) | `testdata/images/` (copied from `background-docs/`) | `hfe_vs_imd_*` (level 1, label `realdata`) |
 | MAME reference traces and the images MAME left (`<scenario>.trace`, `<scenario>.A.imd`) | `testdata/traces/` (made by `tests/mame/make_traces.py`) | level 2 |
 
