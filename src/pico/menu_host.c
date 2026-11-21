@@ -30,8 +30,11 @@ typedef enum {
     HOST_WAITING, /* for a request */
     HOST_LISTING,
     HOST_OPENING,
-    HOST_SAVING, /* IMAGE_x.CFG, after a change */
+    HOST_SAVING,      /* IMAGE_x.CFG, after a change */
+    HOST_REINSERTING, /* a card has come back: putting the start-up images back, drive by drive */
 } host_state_t;
+
+#define CARD_CHECK_US 2000000u
 
 /* All of it core 0's alone. */
 static idc_t *unit;
@@ -40,6 +43,11 @@ static volatile bool between_commands; /* written by idc's idle hook, read by me
 static host_state_t state;
 static ui_request_t cur;
 static volatile uint32_t longest_us; /* written by core 0; core 1 reads it for its report */
+static const config_t *settings;
+static bool (*card_back_fn)(void);
+static uint64_t next_check_us;
+static bool reinserting; /* the insert under way puts a start-up image back: no request to answer */
+static unsigned reinsert_next;
 
 static void post_unit(void) {
     ui_unit_t u;
@@ -48,9 +56,12 @@ static void post_unit(void) {
     mailbox_post_unit(&u);
 }
 
-void menu_host_init(idc_t *idc, bool rom) {
+void menu_host_init(idc_t *idc, bool rom, const config_t *c, bool (*card_back)(void)) {
     unit = idc;
     rom_found = rom;
+    settings = c;
+    card_back_fn = card_back;
+    next_check_us = time_us_64() + CARD_CHECK_US;
     state = HOST_WAITING;
     post_unit();
 }
@@ -74,10 +85,49 @@ static void finish(bool ok, const char *message) {
     mailbox_post_done(ok, message);
 }
 
+/* Putting the start-up images back after a card came back: the next drive's, or done. */
+static void reinsert_step(void) {
+    const char *why = NULL;
+    while (reinsert_next < IDC_PHYS_DRIVES) {
+        unsigned d = reinsert_next++;
+        if (sd_store_startup_path(d, settings, cur.path) && sd_store_insert_begin(d, cur.path, &why)) {
+            cur.drive = d;
+            reinserting = true;
+            state = HOST_OPENING;
+            return;
+        }
+    }
+    reinserting = false;
+    state = HOST_WAITING;
+    post_unit();
+}
+
+/* Is the card still there, or back? Only between requests. */
+static void check_card(void) {
+    if (sd_store_mounted()) {
+        if (sd_store_card_responds()) return;
+        sd_store_card_gone(); /* first: so writing back the caches fails at once, not after the card's timeouts */
+        for (unsigned d = 0; d < IDC_PHYS_DRIVES; d++)
+            change_disc(d);
+        post_unit();
+    } else if (sd_store_card_responds()) {
+        rom_found = card_back_fn && card_back_fn();
+        if (!sd_store_mounted()) return;
+        reinsert_next = 0;
+        state = HOST_REINSERTING;
+        post_unit();
+    }
+}
+
 static void step(void) {
     const char *why = NULL;
     switch (state) {
         case HOST_WAITING:
+            if (time_us_64() >= next_check_us) {
+                next_check_us = time_us_64() + CARD_CHECK_US;
+                check_card();
+                return;
+            }
             if (!mailbox_take_request(&cur)) return;
             switch (cur.kind) {
                 case UI_REQ_LIST:
@@ -120,15 +170,22 @@ static void step(void) {
                 case SD_STEP_MORE:
                     return;
                 case SD_STEP_FAILED:
-                    finish(false, why);
+                    if (reinserting) {
+                        state = HOST_REINSERTING;
+                    } else {
+                        finish(false, why);
+                    }
                     return;
                 case SD_STEP_DONE:
                     change_disc(cur.drive);
                     sd_store_insert_commit();
                     post_unit();
-                    state = HOST_SAVING;
+                    state = reinserting ? HOST_REINSERTING : HOST_SAVING;
                     return;
             }
+            return;
+        case HOST_REINSERTING:
+            reinsert_step();
             return;
         case HOST_SAVING:
             /* the change is made whether or not it can be remembered */

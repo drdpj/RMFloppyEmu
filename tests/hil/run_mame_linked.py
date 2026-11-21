@@ -206,6 +206,18 @@ def run_scenario(s, args, mame, roms, testdata, server, console):
     far = run_hil.Far480Z(args.port)
     if server:
         restart_pico(server, console, far)
+    if args.save_delay:
+        presses = (0, 250, 500, 1000, 2000, 4000).index(args.save_delay)
+        end = time.monotonic() + 5  # core 1 reads keys once its display is up: "UI: display ..."
+        while time.monotonic() < end and b"UI: display" not in console.readline():
+            pass
+        console.reset_input_buffer()
+        console.write(b"w" * presses)
+        time.sleep(0.5)
+        said = console.read(console.in_waiting).decode(errors="replace")
+        if f"takes {args.save_delay} ms longer" not in said:
+            raise SystemExit(f"the save delay wasn't set: {said!r}")
+        print(f"   test hook: every save takes {args.save_delay} ms longer")
     far.p.close()
 
     port = free_port()
@@ -378,6 +390,8 @@ def main():
     ap.add_argument("--out", type=pathlib.Path, help="where to put the logs (default RMFE_TESTDATA/linked)")
     ap.add_argument("--keep-card", action="store_true", help="leave the discs as the scenario left them")
     ap.add_argument("--restore", action="store_true", help="only put the card's discs back as the original")
+    ap.add_argument("--save-delay", type=int, choices=(0, 250, 500, 1000, 2000, 4000), default=0,
+                    help="test hook: make every save on the card take this many ms longer (src/pico/panel.h, key w)")
     ap.add_argument("--use-menu", action="store_true", help="work the menu through the console during each scenario")
     args = ap.parse_args()
 

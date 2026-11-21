@@ -133,4 +133,6 @@ drive B, MFM tracks (2026-11-21):
 An empty IMD, or one in another layout, makes the first format of each missing or different track rewrite the whole
 image: a second or more each time. HFE never needs a rewrite, but every write and every track change costs more.
 
-Don't take the card out while the 480Z is writing. Changing the card while the unit is running isn't supported yet.
+Don't take the card out while the 480Z is writing. The card can be taken out and put back while the unit runs. Within about two seconds both drives empty (anything
+the 480Z had written that was still in the unit's cache is lost, and the console says so) and the display says "No
+SD card"; when a card goes back in, its settings, the ROM and the images are read again as at start-up.

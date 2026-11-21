@@ -151,6 +151,11 @@ The approach is a C reimplementation of the disk unit's command set, with a stag
         rescue reset (5 of 30 resets). The test scripts now restart with a whole-chip watchdog reset (0 of 90) and
         flash with both cores halted (`docs/testing.md`, "Resetting the Pico 2"). Only the debugger's reset is
         affected; power-on, the RUN pin and the watchdog reset both cores together.
+      - Closed afterwards: the card can be taken out and put back while running (checked every 2 s between
+        commands; the remount is one step of 89 ms); the 480Z waits at least 4 s for a slow format and 2 s for a
+        slow write (`docs/protocol.md`, "Flow control"), so an image's whole rewrite (at most about 2.5 s) is
+        tolerated; `format`'s long waits are the formatting itself, as without the menu (90% 111 ms, max 273 ms);
+        and `tools/imd/make_blank.py` makes blank discs that format in place (`docs/sd-card.md`).
     - **Next:** test on the real 480Z (`docs/acceptance.md`), and milestone 7, the transceiver.
 
 ## Decided (2026-11-20)

@@ -87,6 +87,10 @@ receiver.
     block and waiting for `FF`'s answer), pulses RTS and shows "Disc Error". Replies up to 186 ms later were
     tolerated after `0C` (FORMAT), so the wait depends on the command. The real unit through USB answers in
     0.9 ms median, 5.8 ms at worst (MAME's time), so there is a wide margin.
+  - **A slow unit** (`run_mame_linked.py --save-delay`, every save on the card made slower, 2026-11-21): the 480Z
+    waited 4.15 s for FORMAT's `0C` and 2 s for CP/M's writes, with no reset beyond the ones MAME's own unit gets.
+    So the 145 ms limit applies to the exchanges it was measured in (the boot block, `FF`), not to the answer to a
+    write or a format, and a card that takes a few seconds to rewrite an image is tolerated.
   - Through the link the 480Z sent two bytes with bad parity: its first `00` after power-up and its first `FF`
     after going fast, each the first byte after it reprograms its baud rate (it may be MAME's emulation; the
     IDC takes a command byte whatever its parity, so either way it does no harm).

@@ -29,6 +29,7 @@
 #include "core/ui.h"
 #include "pico/mailbox.h"
 #include "pico/menu_host.h"
+#include "pico/sd_store.h"
 #include "pico/stack_meter.h"
 #include "pico/tft.h"
 
@@ -156,6 +157,14 @@ static void console_key(uint32_t ms) {
         case 'c': /* show-commands, until the next start */
             ui_set_options(&ui, !ui.show_commands);
             break;
+        case 'w': { /* test hook: slow saves (sd_store_set_save_delay) */
+            static const uint32_t delays[] = {0, 250, 500, 1000, 2000, 4000};
+            static unsigned k;
+            k = (k + 1u) % (sizeof delays / sizeof delays[0]);
+            sd_store_set_save_delay(delays[k]);
+            printf("TEST: each save now takes %lu ms longer\n", (unsigned long)delays[k]);
+            break;
+        }
         case 'd':
             for (unsigned row = 0; row < UI_ROWS; row++)
                 printf("SCREEN %2u %u|%s|\n", row, ui.screen.attr[row], ui.screen.text[row]);

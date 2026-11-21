@@ -31,7 +31,7 @@
  *   - They meet only in pico/mailbox.c. Each has its own 4 KB stack with the hardware limit at its bottom.
  *   - Both print on the console; the SDK serialises that, so a line from core 1 can delay one from core 0, which
  *     prints only at start-up, on errors and when an image changes.
- * Not yet here (docs/plan.md, milestone 6): changing the card while running.
+ * The card may be taken out and put back while it runs (pico/menu_host.c).
  */
 #include <stdio.h>
 
@@ -58,6 +58,21 @@ static void report_exec(void *ctx, uint16_t address, const uint8_t ram[IDC_RAM_B
     printf("0B: the 480Z asked to run uploaded code at %04X (not run; answered 40)\n", address);
 }
 
+/* A card has come back (pico/menu_host.c): mount it, and read the settings and the ROM again, as at start-up. Core 0,
+ * between commands. Core 1 read its settings (the knob, show-commands) at its start and keeps them. */
+static bool card_back(void) {
+    if (!sd_store_mount()) return false;
+    sd_store_read_config(&cfg);
+    for (unsigned d = 0; d < IDC_PHYS_DRIVES; d++)
+        idc_set_drive_type(&idc, d, cfg.drive_type[d]);
+    size_t rom_len = 0, boot_len = 0;
+    const uint8_t *boot = NULL;
+    if (sd_store_read_rom(&cfg, rom, &rom_len)) (void)idc_find_boot_block(rom, rom_len, &boot, &boot_len);
+    idc.boot_block = boot; /* the ROM is read into the same buffer, so FF sends it from there as before */
+    idc.boot_len = boot_len;
+    return boot != NULL;
+}
+
 int main(void) {
     stack_meter_paint_core0();
     stdio_init_all();
@@ -82,7 +97,7 @@ int main(void) {
         idc_set_drive_type(&idc, d, cfg.drive_type[d]);
 
     mailbox_init();
-    menu_host_init(&idc, boot != NULL);
+    menu_host_init(&idc, boot != NULL, &cfg, card_back);
     idc.idle_hook = menu_host_idle;
     idc.activity_hook = mailbox_note_activity;
     link_uart_set_idle(menu_host_poll);

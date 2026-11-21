@@ -28,11 +28,14 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "core/config.h"
 #include "core/idc.h"
 
-/* Before serving: the command layer (for idc_change_disc) and whether the IDC ROM was found. Posts what the drives
- * hold. */
-void menu_host_init(idc_t *idc, bool rom);
+/* Before serving: the command layer (for idc_change_disc), whether the IDC ROM was found, the settings, and what to
+ * do when a card comes back (mount it, re-read the settings and the ROM: returns whether the ROM was found). Posts
+ * what the drives hold. Every few seconds, between commands, it also checks the card is still there; when it goes,
+ * both drives empty, and when one comes back, the images are put back as at start-up, a step at a time. */
+void menu_host_init(idc_t *idc, bool rom, const config_t *c, bool (*card_back)(void));
 
 /* For idc_t.idle_hook: the unit is (or stops being) between commands. */
 void menu_host_idle(void *ctx, bool idle);

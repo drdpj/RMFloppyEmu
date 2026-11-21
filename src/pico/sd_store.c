@@ -36,6 +36,7 @@
 #include "pico/time.h"
 
 #include "ff.h"
+#include "hw_config.h"
 
 #define CELL_BYTES   16384u /* one HFE track side's cells (core/disk_image.h) */
 #define TEXT_MAX     2048u  /* the most of a configuration file read */
@@ -226,10 +227,19 @@ static disk_status_t s_load(void *ctx, unsigned drive, unsigned cyl, unsigned si
     return disk_image_load(&drives[drive]->img, cyl, side, t);
 }
 
+/* A test hook (src/pico/panel.h, key w): extra time added to every save, to find how long the 480Z waits for a slow
+ * card. Written by core 1, read by core 0. */
+static volatile uint32_t save_delay_ms;
+
+void sd_store_set_save_delay(uint32_t ms) {
+    save_delay_ms = ms;
+}
+
 static disk_status_t s_save(void *ctx, unsigned drive, const disk_track_t *t) {
     (void)ctx;
     sd_drive_t *d = drives[drive];
     disk_status_t st = disk_image_save(&d->img, t);
+    if (save_delay_ms) sleep_ms(save_delay_ms);
     if (st == DISK_OK && f_sync(&d->f) != FR_OK) st = DISK_ERR_IO; /* on the card before the 480Z hears OK */
     if (st != DISK_OK && st != DISK_ERR_READ_ONLY)
         printf("SD: %c: saving cylinder %u side %u failed (%d)\n", d->letter, t->cyl, t->side, st);
@@ -360,6 +370,17 @@ static bool named_image(unsigned n, const config_t *c, char path[CONFIG_PATH_MAX
     if (config_image_path(text, len, path, CONFIG_PATH_MAX)) return true;
     printf("SD: %s%s names no image\n", cfg_dir, name);
     return false;
+}
+
+bool sd_store_startup_path(unsigned n, const config_t *c, char path[CONFIG_PATH_MAX]) {
+    if (!mounted) return false;
+    if (named_image(n, c, path)) {
+        FILINFO fi;
+        unsigned other = n ^ 1u;
+        bool taken = drives[other]->present && config_compare_names(path, drives[other]->path) == 0;
+        if (exists(path, &fi) && !taken) return true;
+    }
+    return n == 0 && first_listed_image(path); /* init: A gets the first image, B none */
 }
 
 void sd_store_insert_startup_images(const config_t *c) {
@@ -576,4 +597,27 @@ void sd_store_unit(ui_unit_t *u) {
         out->cylinders = disk_image_cylinders(&d->img);
         strcpy(out->path, d->path);
     }
+}
+
+/* ---- the card coming and going (sd_store.h) ------------------------------------------------------------------- */
+
+bool sd_store_mounted(void) {
+    return mounted;
+}
+
+bool sd_store_card_responds(void) {
+    sd_card_t *sd = sd_get_by_num(0);
+    return sd && sd->sd_test_com(sd);
+}
+
+void sd_store_card_gone(void) {
+    for (unsigned n = 0; n < IDC_PHYS_DRIVES; n++) {
+        cache_forget(drives[n]);
+        drives[n]->present = false; /* its file went with the card: nothing to close */
+    }
+    listing = false;
+    opening = NULL;
+    (void)f_unmount("");
+    mounted = false;
+    printf("SD: the card has gone: both drives are empty\n");
 }

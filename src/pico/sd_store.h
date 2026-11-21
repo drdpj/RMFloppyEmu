@@ -83,6 +83,21 @@ void sd_store_eject(unsigned drive);
 /* Names the drive's image in IMAGE_x.CFG (empty if the drive is), as FlashFloppy remembers the last one chosen. */
 bool sd_store_save_choice(unsigned drive);
 
+/*
+ * The card coming and going while the unit runs (pico/menu_host.c checks every few seconds, between commands).
+ * card_responds: true if a card answers, a cheap check either way (CMD13 to a card in use, or a short CMD0).
+ * card_gone: the card in use no longer answers: both drives are emptied and FatFs forgets it; mount it again with
+ * sd_store_mount(). startup_path: the image image-on-startup puts in drive n (as at start-up), for putting the
+ * images back in a step at a time (sd_store_insert_begin); false for none.
+ */
+bool sd_store_mounted(void);
+bool sd_store_card_responds(void);
+void sd_store_card_gone(void);
+bool sd_store_startup_path(unsigned n, const config_t *c, char path[CONFIG_PATH_MAX]);
+
+/* Test hook: every save takes ms longer (0: none), as a slow card would. Either core may call it. */
+void sd_store_set_save_delay(uint32_t ms);
+
 /* What the drives hold, for the menu (ui_unit_t; rom is the caller's to fill). */
 void sd_store_unit(ui_unit_t *u);
 

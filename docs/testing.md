@@ -311,6 +311,10 @@ tests/hil/run_mame_linked.py --restore                              # put the ca
 - It compares the bytes the 480Z sent and received with the MAME reference trace, and prints each difference, but
   they aren't failures: with the card's drives 40-track (`drive-a = auto`), `06`'s format byte is `02`, not
   MAME's `0A`, and CP/M then takes a slightly different path (an extra log-in and read after each warm boot).
+- `--save-delay MS` (250 to 4000) makes every save on the card that much slower (`src/pico/panel.h`, key `w`), to
+  find what the 480Z tolerates: it waited 4 s for FORMAT and 2 s for writes. The scenarios then fail only because
+  their fixed running time is too short; judge by the 480Z's resets (`RTS 01` in `link.log` against the `CTC0`
+  lines of the reference trace) and its screen.
 - `--use-menu` works the menu through the console all the while (`src/pico/panel.h` lists the keys: about ten keys a second,
   listing both drives' folders, scrolling, going home and redrawing the whole screen, but never changing a disc),
   to show the display and the menu's work on the card don't hold up the link: the scenario must still pass. It
