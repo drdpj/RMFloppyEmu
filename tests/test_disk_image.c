@@ -334,6 +334,30 @@ static void test_a_write_protected_hfe_refuses_saves(void) {
     TEST_ASSERT_EQUAL_UINT(0, F.writes);
 }
 
+static void test_imd_opens_in_steps_one_track_at_a_time(void) {
+    disk_image_t im;
+    bool done = true;
+    small_imd();
+    TEST_ASSERT_EQUAL(DISK_OK, disk_image_open_begin(&im, DISK_IMAGE_IMD, &io, F.n, false, NULL, 0));
+    TEST_ASSERT_EQUAL(DISK_OK, disk_image_open_step(&im, &done));
+    TEST_ASSERT_FALSE(done);
+    TEST_ASSERT_EQUAL_UINT(1, disk_image_cylinders(&im));
+    TEST_ASSERT_EQUAL(DISK_OK, disk_image_open_step(&im, &done));
+    TEST_ASSERT_TRUE(done);
+    TEST_ASSERT_EQUAL_UINT(2, disk_image_cylinders(&im));
+}
+
+static void test_hfe_open_is_done_at_begin(void) {
+    static uint8_t cells[16384];
+    disk_image_t im;
+    bool done = false;
+    hfe_header();
+    TEST_ASSERT_EQUAL(DISK_OK, disk_image_open_begin(&im, DISK_IMAGE_HFE, &io, F.n, false, cells, sizeof cells));
+    TEST_ASSERT_EQUAL(DISK_OK, disk_image_open_step(&im, &done));
+    TEST_ASSERT_TRUE(done);
+    TEST_ASSERT_EQUAL_UINT(40, disk_image_cylinders(&im));
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_kind_comes_from_the_extension_in_any_case);
@@ -350,5 +374,7 @@ int main(void) {
     RUN_TEST(test_a_bad_imd_is_a_format_error);
     RUN_TEST(test_hfe_opens_with_the_headers_cylinders);
     RUN_TEST(test_a_write_protected_hfe_refuses_saves);
+    RUN_TEST(test_imd_opens_in_steps_one_track_at_a_time);
+    RUN_TEST(test_hfe_open_is_done_at_begin);
     return UNITY_END();
 }

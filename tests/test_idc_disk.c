@@ -626,9 +626,213 @@ static void test_record_limit_is_the_formats_not_the_tracks(void) {
     expect_record(6, 0, 2, 0, 5, 384);
 }
 
+/* --- changing a disc between commands (idle_hook, idc_change_disc) ------------------------------ */
+
+static struct {
+    bool idle;
+    size_t pos; /* script items the 480Z had sent by then */
+} idle_calls[16];
+static unsigned n_idle;
+
+static void record_idle(void *ctx, bool idle) {
+    (void)ctx;
+    TEST_ASSERT_TRUE(n_idle < sizeof idle_calls / sizeof idle_calls[0]);
+    idle_calls[n_idle].idle = idle;
+    idle_calls[n_idle++].pos = f.pos;
+}
+
+static void test_idle_hook_brackets_each_wait_for_a_command_byte_only(void) {
+    size_t n = cmd(0, 0x02, 0x20, 1, 1);
+    script[n++] = (fake_in_t)FB(0x00); /* the record's ack: a wait inside the command, not idle */
+    n = cmd(n, 0x02, 0x20, 1, 2);
+    script[n++] = (fake_in_t)FB(0x00);
+    fake480z_init(&f, script, n);
+    idc_init(&d, &f.io, NULL, 0);
+    idc_set_drives(&d, &drives);
+    n_idle = 0;
+    d.idle_hook = record_idle;
+    idc_run(&d);
+    /* idle before each command byte, busy as soon as it has come; the last wait ends with the script */
+    const bool want_idle[] = {true, false, true, false, true, false};
+    const size_t want_pos[] = {0, 1, 5, 6, 10, 10};
+    TEST_ASSERT_EQUAL_UINT(6, n_idle);
+    for (unsigned i = 0; i < 6; i++) {
+        TEST_ASSERT_EQUAL(want_idle[i], idle_calls[i].idle);
+        TEST_ASSERT_EQUAL_UINT(want_pos[i], idle_calls[i].pos);
+    }
+}
+
+/* Writes record 1 of drive A's track 9 (0xAB), leaving it in the cache. */
+static void write_to_cache(void) {
+    size_t n = cmd(0, 0x04, 0x20, 9, 1);
+    uint8_t rec[128];
+    memset(rec, 0xAB, sizeof rec);
+    n = fake_bytes(script, n, rec, 128);
+    run(n);
+    TEST_ASSERT_EQUAL_HEX8(0x00, f.out[3]);
+    TEST_ASSERT_EQUAL_UINT(0, saves);
+}
+
+/* Reads drive A's track 9 record 1 and returns its first byte. */
+static uint8_t read_back(void) {
+    size_t n = cmd(0, 0x02, 0x20, 9, 1);
+    script[n++] = (fake_in_t)FB(0x00);
+    fake480z_init(&f, script, n);
+    idc_run(&d);
+    TEST_ASSERT_EQUAL_HEX8(0x00, f.out[2]);
+    return f.out[3];
+}
+
+static void test_changing_a_disc_writes_its_cached_track_to_the_old_disc_first(void) {
+    write_to_cache();
+    TEST_ASSERT_EQUAL_HEX8(IDC_STATUS_OK, idc_change_disc(&d, 0));
+    TEST_ASSERT_EQUAL_UINT(1, saves);
+    TEST_ASSERT_EQUAL_HEX8(0xAB, disc(0, 9, 0)->data[disc(0, 9, 0)->secs[0].data_off]);
+}
+
+static void test_after_a_disc_change_the_next_read_comes_from_the_new_disc(void) {
+    write_to_cache();
+    TEST_ASSERT_EQUAL_HEX8(IDC_STATUS_OK, idc_change_disc(&d, 0));
+    nkept = 0; /* the new disc: the pattern, not what was written to the old one */
+    TEST_ASSERT_EQUAL_HEX8(pattern(0, 9, 0, 1, 0), read_back());
+}
+
+static void test_a_disc_change_on_a_protected_disc_reports_40_and_still_forgets_the_track(void) {
+    write_to_cache();
+    read_only[0] = true;
+    TEST_ASSERT_EQUAL_HEX8(IDC_STATUS_WRITE_PROTECT, idc_change_disc(&d, 0));
+    TEST_ASSERT_EQUAL_UINT(0, saves);
+    read_only[0] = false;
+    TEST_ASSERT_EQUAL_HEX8(pattern(0, 9, 0, 1, 0), read_back());
+}
+
+static void test_a_disc_change_with_nothing_written_saves_nothing_and_leaves_the_other_drive(void) {
+    size_t n = cmd(0, 0x04, 0x21, 9, 1); /* drive B's cache gets a change (B: is 21: docs/protocol.md) */
+    uint8_t rec[128];
+    memset(rec, 0xCD, sizeof rec);
+    n = fake_bytes(script, n, rec, 128);
+    n = cmd(n, 0x02, 0x20, 9, 1); /* and drive A's a clean track */
+    script[n++] = (fake_in_t)FB(0x00);
+    run(n);
+    TEST_ASSERT_EQUAL_HEX8(IDC_STATUS_OK, idc_change_disc(&d, 0));
+    TEST_ASSERT_EQUAL_UINT(0, saves); /* B's change is still only in its cache */
+    TEST_ASSERT_EQUAL_HEX8(IDC_STATUS_OK, idc_change_disc(&d, 1));
+    TEST_ASSERT_EQUAL_UINT(1, saves);
+    TEST_ASSERT_EQUAL_HEX8(0xCD, disc(1, 9, 0)->data[disc(1, 9, 0)->secs[0].data_off]);
+}
+
+/* --- what the unit is doing (activity_hook) ------------------------------------------------------------- */
+
+static idc_activity_t acts[16];
+static unsigned n_acts;
+
+static void record_activity(void *ctx, const idc_activity_t *a) {
+    (void)ctx;
+    TEST_ASSERT_TRUE(n_acts < sizeof acts / sizeof acts[0]);
+    acts[n_acts++] = *a;
+}
+
+static void run_watched(size_t n) {
+    fake480z_init(&f, script, n);
+    idc_init(&d, &f.io, NULL, 0);
+    idc_set_drives(&d, &drives);
+    n_acts = 0;
+    d.activity_hook = record_activity;
+    idc_run(&d);
+}
+
+static void test_a_read_is_reported_started_with_its_drive_track_and_record_then_ended(void) {
+    size_t n = cmd(0, 0x02, 0x23, 12, 5); /* 23: drive B side 1 (docs/protocol.md, "The drive byte") */
+    script[n++] = (fake_in_t)FB(0x00);
+    run_watched(n);
+    TEST_ASSERT_EQUAL_UINT(3, n_acts);
+    TEST_ASSERT_EQUAL(IDC_ACT_START, acts[0].stage);
+    TEST_ASSERT_EQUAL_HEX8(0x02, acts[0].cmd);
+    TEST_ASSERT_FALSE(acts[0].has_drive);
+    TEST_ASSERT_EQUAL(IDC_ACT_DRIVE, acts[1].stage);
+    TEST_ASSERT_TRUE(acts[1].has_drive);
+    TEST_ASSERT_EQUAL_UINT8(1, acts[1].drive);
+    TEST_ASSERT_EQUAL_UINT8(1, acts[1].side);
+    TEST_ASSERT_TRUE(acts[1].has_track);
+    TEST_ASSERT_EQUAL_UINT8(12, acts[1].track);
+    TEST_ASSERT_EQUAL_UINT8(5, acts[1].third);
+    TEST_ASSERT_EQUAL(IDC_ACT_END, acts[2].stage);
+    TEST_ASSERT_EQUAL_HEX8(0x02, acts[2].cmd);
+    TEST_ASSERT_EQUAL_UINT8(12, acts[2].track); /* the end keeps what the command was */
+}
+
+static void test_log_in_reports_its_drive_without_a_track(void) {
+    script[0] = (fake_in_t)FB(0x01);
+    script[1] = (fake_in_t)FB(0x00);
+    run_watched(2);
+    TEST_ASSERT_EQUAL_UINT(3, n_acts);
+    TEST_ASSERT_TRUE(acts[1].has_drive);
+    TEST_ASSERT_EQUAL_UINT8(0, acts[1].drive);
+    TEST_ASSERT_FALSE(acts[1].has_track);
+}
+
+static void test_format_reports_its_track_and_sector_count(void) {
+    size_t n = cmd(0, 0x0C, 0x21, 7, 16); /* drive B; the IDs are never sent: the script runs out */
+    run_watched(n);
+    TEST_ASSERT_TRUE(n_acts >= 3);
+    TEST_ASSERT_EQUAL(IDC_ACT_DRIVE, acts[1].stage);
+    TEST_ASSERT_EQUAL_UINT8(1, acts[1].drive);
+    TEST_ASSERT_EQUAL_UINT8(7, acts[1].track);
+    TEST_ASSERT_EQUAL_UINT8(16, acts[1].third);
+    TEST_ASSERT_EQUAL(IDC_ACT_END, acts[n_acts - 1].stage);
+}
+
+static void test_commands_without_a_drive_and_unknown_ones_are_started_and_ended(void) {
+    script[0] = (fake_in_t)FB(0x11);
+    script[1] = (fake_in_t)FB(0x09);
+    run_watched(2);
+    TEST_ASSERT_EQUAL_UINT(4, n_acts);
+    const idc_act_stage_t want[] = {IDC_ACT_START, IDC_ACT_END, IDC_ACT_START, IDC_ACT_END};
+    for (unsigned i = 0; i < 4; i++) {
+        TEST_ASSERT_EQUAL(want[i], acts[i].stage);
+        TEST_ASSERT_FALSE(acts[i].has_drive);
+    }
+    TEST_ASSERT_EQUAL_HEX8(0x09, acts[3].cmd);
+}
+
+static void test_a_command_cut_short_by_a_reset_still_ends(void) {
+    script[0] = (fake_in_t)FB(0x02);
+    script[1] = (fake_in_t)FB(0x20);
+    script[2] = (fake_in_t)FRESET;
+    run_watched(3);
+    TEST_ASSERT_EQUAL_UINT(2, n_acts);
+    TEST_ASSERT_EQUAL(IDC_ACT_START, acts[0].stage);
+    TEST_ASSERT_EQUAL(IDC_ACT_END, acts[1].stage);
+}
+
+static void test_command_names_and_which_write(void) {
+    /* docs/protocol.md, "Command table" */
+    TEST_ASSERT_EQUAL_STRING("read", idc_command_name(0x02));
+    TEST_ASSERT_EQUAL_STRING("boot block", idc_command_name(0xFF));
+    TEST_ASSERT_EQUAL_STRING("format", idc_command_name(0x0C));
+    TEST_ASSERT_EQUAL_STRING("?", idc_command_name(0x09));
+    TEST_ASSERT_EQUAL_STRING("?", idc_command_name(0x80));
+    const uint8_t writes[] = {0x03, 0x04, 0x08, 0x0C, 0x0F, 0x10};
+    for (unsigned c = 0; c < 256; c++) {
+        bool w = memchr(writes, (int)c, sizeof writes) != NULL;
+        TEST_ASSERT_EQUAL_MESSAGE(w, idc_command_writes((uint8_t)c), "writes");
+    }
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_login_ready_and_not_ready);
+    RUN_TEST(test_idle_hook_brackets_each_wait_for_a_command_byte_only);
+    RUN_TEST(test_a_read_is_reported_started_with_its_drive_track_and_record_then_ended);
+    RUN_TEST(test_log_in_reports_its_drive_without_a_track);
+    RUN_TEST(test_format_reports_its_track_and_sector_count);
+    RUN_TEST(test_commands_without_a_drive_and_unknown_ones_are_started_and_ended);
+    RUN_TEST(test_a_command_cut_short_by_a_reset_still_ends);
+    RUN_TEST(test_command_names_and_which_write);
+    RUN_TEST(test_changing_a_disc_writes_its_cached_track_to_the_old_disc_first);
+    RUN_TEST(test_after_a_disc_change_the_next_read_comes_from_the_new_disc);
+    RUN_TEST(test_a_disc_change_on_a_protected_disc_reports_40_and_still_forgets_the_track);
+    RUN_TEST(test_a_disc_change_with_nothing_written_saves_nothing_and_leaves_the_other_drive);
     RUN_TEST(test_read_mfm_record_maps_to_sector_and_offset);
     RUN_TEST(test_read_side_1_and_fm_track_0);
     RUN_TEST(test_mfm_records_follow_the_2_to_1_skew);

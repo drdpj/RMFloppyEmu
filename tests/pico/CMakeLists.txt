@@ -115,3 +115,17 @@ target_link_libraries(sd_probe rmfe_core rmfe_fatfs_sd pico_stdlib)
 pico_enable_stdio_uart(sd_probe 1)
 pico_enable_stdio_usb(sd_probe 0)
 pico_add_extra_outputs(sd_probe)
+
+# Display and encoder bring-up (tests/hil/display_probe.c, run by tests/hil/run_display_probe.py): the TFT's ID,
+# the SPI clocks it takes, colour bars and text, the backlight's PWM, and every encoder step and press.
+set(RMFE_DISPLAY_PROBE_SOURCES ${RMFE_ROOT}/tests/hil/display_probe.c ${RMFE_ROOT}/src/pico/font_8x13.c
+                               ${RMFE_ROOT}/src/pico/fault.c ${RMFE_ROOT}/src/pico/assert_hook.c)
+add_executable(display_probe ${RMFE_DISPLAY_PROBE_SOURCES})
+set_source_files_properties(${RMFE_ROOT}/tests/hil/display_probe.c ${RMFE_ROOT}/src/pico/font_8x13.c
+                            PROPERTIES COMPILE_OPTIONS "${RMFE_WARNINGS};-Werror")
+target_include_directories(display_probe PRIVATE ${RMFE_ROOT}/src)
+target_compile_definitions(display_probe PRIVATE PICO_STACK_SIZE=0x1000 PICO_USE_STACK_GUARDS=1)
+target_link_libraries(display_probe rmfe_core pico_stdlib hardware_spi hardware_dma hardware_pwm)
+pico_enable_stdio_uart(display_probe 1)
+pico_enable_stdio_usb(display_probe 0)
+pico_add_extra_outputs(display_probe)

@@ -78,6 +78,12 @@ bool disk_image_kind_from_name(const char *name, disk_image_kind_t *kind);
 disk_status_t disk_image_open(disk_image_t *im, disk_image_kind_t kind, const disk_image_io_t *io, uint32_t file_len,
                               bool read_only, uint8_t *cells, uint32_t cells_cap);
 
+/* The same in steps (disk_imd_open_begin/step): begin, then step until *done; each step reads a track record's
+ * worth of the file at most. An HFE is done at begin. The image is usable only once done. */
+disk_status_t disk_image_open_begin(disk_image_t *im, disk_image_kind_t kind, const disk_image_io_t *io,
+                                    uint32_t file_len, bool read_only, uint8_t *cells, uint32_t cells_cap);
+disk_status_t disk_image_open_step(disk_image_t *im, bool *done);
+
 /* Cylinders in the image (1 + the highest with a record, for IMD; the header's, for HFE). */
 unsigned disk_image_cylinders(const disk_image_t *im);
 

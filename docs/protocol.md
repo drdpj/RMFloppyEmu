@@ -228,6 +228,13 @@ not run. Choices made where the ROM leaves the device free, or where the image s
     MFM 26 × 256 (gap 3 60 × 4E) [03c0, 0457]: 8-inch layouts, too long for a 5¼-inch track.
   - We always format the cylinder asked for. The IDC can miss it after a drive switches from double to quad
     density (an IDC bug we don't reproduce: "Switching a drive from double to quad density", below).
+- **Changing a disc** (the menu, `docs/sd-card.md`; owner, 2026-11-21: instant). The protocol has no disc-change
+  signal: the 480Z learns of a new disc only from what it reads (CP/M from its directory checksum, which makes a
+  changed disc read-only until a warm boot). So the image changes between two commands, never during one, and the
+  next command finds the new disc; an empty drive answers `80`, as `no_disc` does in MAME. The drive's cached track
+  is first written back to the image it came from, as `08` would (`idc_change_disc`): a real IDC with a written
+  buffer would write it to whatever disc was then in the drive, which is never what was meant. If that write-back
+  fails, the change is lost, as with a failed `08`, and the console says so.
 - **IMD tracks are laid out with standard IBM gaps** (`disk_imd.c`, `imd_lay_out`), as MAME lays them out:
   gap 4a, IAM and gap 1 (146 bytes MFM, 73 FM), then 62 (MFM) or 33 (FM) bytes plus the data and gap 3 per
   sector, gap 3 being 80 for 512-byte sectors and 50 for smaller ones, shrunk to fit. So the 4MATION loaders meet

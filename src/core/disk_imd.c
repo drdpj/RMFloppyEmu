@@ -17,9 +17,10 @@
  */
 #include "core/disk_imd.h"
 
-#include <string.h>
-
 #include "core/bytes.h"
+#include "core/rmfe_assert.h"
+
+#include <string.h>
 
 #define IMD_HEADER_MAX   65536u /* the comment can't plausibly be longer */
 #define IMD_HEAD_CYLMAP  0x80u
@@ -95,7 +96,7 @@ static disk_status_t skip_data(const disk_imd_t *img, const record_t *r, uint32_
     return DISK_OK;
 }
 
-disk_status_t disk_imd_open(disk_imd_t *img, disk_read_fn read, void *ctx, uint32_t file_len) {
+disk_status_t disk_imd_open_begin(disk_imd_t *img, disk_read_fn read, void *ctx, uint32_t file_len) {
     memset(img, 0, sizeof *img);
     img->read = read;
     img->ctx = ctx;
@@ -118,21 +119,36 @@ disk_status_t disk_imd_open(disk_imd_t *img, disk_read_fn read, void *ctx, uint3
         at += n;
     }
     img->first_track = at;
-
-    record_t r;
-    while (at < file_len) {
-        disk_status_t st = read_record(img, at, &r);
-        if (st != DISK_OK) return st;
-        unsigned side = r.head & 1u;
-        if (r.cyl >= DISK_IMD_MAX_CYLS) return DISK_ERR_FORMAT;
-        if (img->track_off[r.cyl][side]) return DISK_ERR_FORMAT; /* the same track twice */
-        img->track_off[r.cyl][side] = at;
-        if (r.cyl + 1u > img->cylinders) img->cylinders = (uint8_t)(r.cyl + 1u);
-        if (side + 1u > img->sides) img->sides = (uint8_t)(side + 1u);
-        st = skip_data(img, &r, &at);
-        if (st != DISK_OK) return st;
-    }
+    img->scan_at = at;
     return DISK_OK;
+}
+
+disk_status_t disk_imd_open_step(disk_imd_t *img, bool *done) {
+    RMFE_ASSERT(img && done);
+    *done = img->scan_at >= img->file_len;
+    if (*done) return DISK_OK;
+    uint32_t at = img->scan_at;
+    record_t r;
+    disk_status_t st = read_record(img, at, &r);
+    if (st != DISK_OK) return st;
+    unsigned side = r.head & 1u;
+    if (r.cyl >= DISK_IMD_MAX_CYLS) return DISK_ERR_FORMAT;
+    if (img->track_off[r.cyl][side]) return DISK_ERR_FORMAT; /* the same track twice */
+    img->track_off[r.cyl][side] = at;
+    if (r.cyl + 1u > img->cylinders) img->cylinders = (uint8_t)(r.cyl + 1u);
+    if (side + 1u > img->sides) img->sides = (uint8_t)(side + 1u);
+    st = skip_data(img, &r, &at);
+    if (st != DISK_OK) return st;
+    img->scan_at = at;
+    *done = at >= img->file_len;
+    return DISK_OK;
+}
+
+disk_status_t disk_imd_open(disk_imd_t *img, disk_read_fn read, void *ctx, uint32_t file_len) {
+    disk_status_t st = disk_imd_open_begin(img, read, ctx, file_len);
+    for (bool done = false; st == DISK_OK && !done;)
+        st = disk_imd_open_step(img, &done);
+    return st;
 }
 
 /*

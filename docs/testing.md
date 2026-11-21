@@ -93,6 +93,34 @@ timeout 900 tests/pico/run_on_target.py build-pico-tests [test_<module> ...] [--
   a big buffer, `RMFE_TEST_ON_TARGET` (defined only in the target build) gives it a smaller size there
   (`test_disk_write`).
 
+### Resetting the Pico 2
+
+Never reset a running RP2350 with OpenOCD's `reset` (`reset run`, `program … reset`). OpenOCD resets each core in
+turn with SYSRESETREQ, 50 ms apart, and on the RP2350 SYSRESETREQ resets only its own core (RP2350 datasheet;
+[raspberrypi/openocd PR 153](https://github.com/raspberrypi/openocd/pull/153)). With core 1 running our firmware from
+flash in that gap, its fetches collide with core 0's boot ROM driving the flash in direct mode, and the QMI can stick
+busy (`DIRECT_CSR` `03010803`). Every reset after that stops in the boot ROM, and OpenOCD can't program the flash,
+until the power is cycled or the chip is rescued. Measured on the bench, 2026-11-21:
+
+| Reset | Firmware | Didn't start |
+|---|---|---|
+| OpenOCD `reset run` | one core (before the display) | 0 of 30 |
+| OpenOCD `reset run` | two cores, core 1 never started | 0 of 30 |
+| OpenOCD `reset run` | two cores | 5 of 30 |
+| OpenOCD `reset run` | two cores, core 1 sleeping 20 ms a pass | 12 of 30 |
+| watchdog, whole chip | two cores | 0 of 90 |
+
+So the scripts (`tests/pico/run_on_target.py`) restart the firmware with the reset the SDK's `watchdog_reboot()`
+does, written by the debugger: PSM `WDSEL` = every block but the oscillators, watchdog scratch 4 cleared, then the
+watchdog's trigger. Both cores and the QMI reset together. They flash with both cores halted first (as
+[hathach/agentrc](https://github.com/hathach/agentrc/issues/395) found for `program`), then that reset: 10 of 10
+flashes and 10 of 10 restarts started. Power-on, the RUN pin and a watchdog reset reset both cores together, so a
+unit in use is never exposed to this.
+
+A Pico stuck this way doesn't need a power cycle: the RP2350's rescue reset, through its RP-AP (OpenOCD's
+`target/rp2350-rescue.cfg` does it), resets the whole chip and holds it in the boot ROM. With an OpenOCD server
+running: `rp2350.dap apreg 0x80000 0 0x80000000; rp2350.dap apreg 0x80000 0 0`, then flash as usual.
+
 ## 3. MAME comparison tests (level 2)
 
 MAME's `rm480z` driver runs the real IDC3 firmware on an emulated Z80. It is our reference for what the drive says on
@@ -226,6 +254,31 @@ Both scripts print the git hash with the results, and `--log` keeps them. The ti
 from command to last byte, against 11.9 ms on the wire. The 480Z's own timeouts are still an open question
 (`docs/protocol.md`).
 
+### The display and encoder
+
+```
+ninja -C build-pico-tests                                   # builds display_probe.elf too
+timeout 600 tests/hil/run_display_probe.py build-pico-tests [--console CONSOLE_PORT] [--clicks N] [--log FILE]
+```
+
+Wiring in `docs/hardware.md`, "Wiring the display and encoder". `display_probe.elf` (`tests/hil/display_probe.c`)
+is bring-up firmware, separate from the device's. The script flashes it and checks, from the console:
+
+- the controller answers over MISO: its power mode (`0A`) changes from reset to on. It also says which controller
+  it is: ILI9341 by its ID4 (`D3`: `00 93 41`), ST7789 by its RDDID (`04`: `85 85 52`);
+- a pseudo-random pattern written into the panel's memory reads back intact (`2E`, at 4 MHz) at the slowest
+  clock at least (75, 37.5, 25, 18.75 and 12.5 MHz are tried, with the time to fill the screen at each);
+- the soak: at least one clock writes 100 full-width strips a text line high, each with its own window commands,
+  at random rows, and every pixel reads back right. The probe then uses the fastest clean clock. A short pattern
+  isn't enough: on jumper wires 75 MHz read a 32 x 4 pattern back intact but garbled 67 of 100 strips;
+- the backlight's PWM ran down to off and back;
+- it is interactive: N clicks clockwise give N steps of one sign, N anticlockwise N of the other, and one press of
+  the knob one press and one release. It prints which sign is clockwise, and how many quadrature states were
+  missed.
+
+It ends with what to check by eye: the text reads the right way round, the eight colour bars are in order and
+named, the corner marker, and the brightness following the knob.
+
 ### MAME in the loop
 
 MAME's emulated 480Z, running the real ROS, CP/M and RM's utilities, in place of the adapter's script: the device
@@ -258,6 +311,11 @@ tests/hil/run_mame_linked.py --restore                              # put the ca
 - It compares the bytes the 480Z sent and received with the MAME reference trace, and prints each difference, but
   they aren't failures: with the card's drives 40-track (`drive-a = auto`), `06`'s format byte is `02`, not
   MAME's `0A`, and CP/M then takes a slightly different path (an extra log-in and read after each warm boot).
+- `--use-menu` works the menu through the console all the while (`src/pico/panel.h` lists the keys: about ten keys a second,
+  listing both drives' folders, scrolling, going home and redrawing the whole screen, but never changing a disc),
+  to show the display and the menu's work on the card don't hold up the link: the scenario must still pass. It
+  fails if the menu stopped answering, and prints the firmware's `STATS` line: the peak stack of each core and the
+  longest step of the menu's work on core 0 (the longest a 480Z command could have waited for it).
 - It writes MAME's output, the screen snapshots, the link log and the bridge's log to `testdata/linked/<name>/`.
 - The turnaround the bridge adds is measured both ways: by the bridge (from writing the 480Z's byte to the
   adapter to reading the first byte back) and by the 480Z, in MAME's time.

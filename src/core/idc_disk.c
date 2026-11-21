@@ -22,6 +22,8 @@
  */
 #include "core/idc_disk.h"
 
+#include "core/rmfe_assert.h"
+
 #include <string.h>
 
 typedef struct {
@@ -182,6 +184,7 @@ static link_status_t rw_params(idc_t *d, rw_t *rw, bool *go) {
     if (st == LINK_OK) st = link_get(&d->link, &rw->track);
     if (st == LINK_OK) st = link_get(&d->link, &rw->record);
     if (st != LINK_OK) return st;
+    idc_note_drive(d, rw->tg.phys, rw->tg.side, true, rw->track, rw->record);
 
     bool ok = ready(d, rw->tg.phys);
     if (!ok) set_sticky(d, IDC_STATUS_NOT_READY);
@@ -222,6 +225,7 @@ link_status_t idc_cmd_login(idc_t *d) {
     target_t tg;
     link_status_t st = get_drive(d, &tg, NULL);
     if (st != LINK_OK) return st;
+    idc_note_drive(d, tg.phys, tg.side, false, 0, 0);
     if (!ready(d, tg.phys)) set_sticky(d, IDC_STATUS_NOT_READY);
     st = link_put(&d->link, d->sticky);
     if (st != LINK_OK || d->sticky != IDC_STATUS_OK) return st;
@@ -300,6 +304,7 @@ link_status_t idc_cmd_flush(idc_t *d) {
     uint8_t p;
     link_status_t st = get_drive(d, &tg, &p);
     if (st != LINK_OK) return st;
+    idc_note_drive(d, tg.phys, tg.side, false, 0, 0);
     if (!ready(d, tg.phys)) set_sticky(d, IDC_STATUS_NOT_READY);
     st = link_put(&d->link, d->sticky);
     if (st != LINK_OK || d->sticky != IDC_STATUS_OK) return st;
@@ -316,6 +321,15 @@ uint8_t idc_flush_all(idc_t *d) {
         if (first == IDC_STATUS_OK) first = st;
     }
     return first;
+}
+
+uint8_t idc_change_disc(idc_t *d, unsigned drive) {
+    RMFE_ASSERT(d && drive < IDC_PHYS_DRIVES);
+    uint8_t res = d->drives ? flush_drive(d, drive) : IDC_STATUS_OK;
+    d->cache[drive].valid = false;
+    d->cache[drive].dirty = false;
+    clear_written(&d->cache[drive]);
+    return res;
 }
 
 /* 0E: read a whole sector by its ID [IDC3 0d6b]: status, result, the count of 128-byte blocks, then each
@@ -384,6 +398,7 @@ link_status_t idc_cmd_probe(idc_t *d) {
     target_t tg;
     link_status_t st = get_drive(d, &tg, NULL);
     if (st != LINK_OK) return st;
+    idc_note_drive(d, tg.phys, tg.side, false, 0, 0);
     if (!ready(d, tg.phys)) set_sticky(d, IDC_STATUS_NOT_READY);
     st = link_put(&d->link, d->sticky);
     if (st != LINK_OK || d->sticky != IDC_STATUS_OK) return st;
@@ -425,6 +440,7 @@ link_status_t idc_cmd_format(idc_t *d, bool verify_only) {
     if (st == LINK_OK) st = link_get(&d->link, &track);
     if (st == LINK_OK) st = link_get(&d->link, &n);
     if (st != LINK_OK) return st;
+    idc_note_drive(d, tg.phys, tg.side, true, track, n);
     bool ok = ready(d, tg.phys);
     if (!ok) set_sticky(d, IDC_STATUS_NOT_READY);
     if (ok && track >= drive_tracks(d, tg.phys)) {

@@ -168,6 +168,52 @@ static void test_text_is_read_only_up_to_its_length(void) {
     TEST_ASSERT_EQUAL(IDC_DRIVE_FOLLOW_IMAGE, c.drive_type[1]);
 }
 
+static void test_show_commands_is_off_by_default_and_takes_yes_or_no(void) {
+    TEST_ASSERT_FALSE(c.show_commands);
+    parse("show-commands = yes\n");
+    TEST_ASSERT_TRUE(c.show_commands);
+    parse("show-commands = maybe\n");
+    TEST_ASSERT_TRUE(c.show_commands);
+    TEST_ASSERT_EQUAL_UINT(1, nwarn);
+    TEST_ASSERT_EQUAL_STRING("show-commands must be yes or no", warn_why[0]);
+    parse("Show-Commands = NO\n");
+    TEST_ASSERT_FALSE(c.show_commands);
+}
+
+static void test_rotary_is_full_and_forward_by_default(void) {
+    TEST_ASSERT_EQUAL(CONFIG_ROTARY_FULL, c.rotary);
+    TEST_ASSERT_FALSE(c.rotary_reverse);
+}
+
+static void test_rotary_takes_each_kind_with_or_without_reverse(void) {
+    parse("rotary = half\n");
+    TEST_ASSERT_EQUAL(CONFIG_ROTARY_HALF, c.rotary);
+    TEST_ASSERT_FALSE(c.rotary_reverse);
+    parse("rotary = quarter,reverse\n");
+    TEST_ASSERT_EQUAL(CONFIG_ROTARY_QUARTER, c.rotary);
+    TEST_ASSERT_TRUE(c.rotary_reverse);
+    parse("ROTARY = Full , Reverse\n");
+    TEST_ASSERT_EQUAL(CONFIG_ROTARY_FULL, c.rotary);
+    TEST_ASSERT_TRUE(c.rotary_reverse);
+    parse("rotary = full\n"); /* a later line without reverse turns it off again */
+    TEST_ASSERT_FALSE(c.rotary_reverse);
+    TEST_ASSERT_EQUAL_UINT(0, nwarn);
+}
+
+static void test_rotary_refuses_other_kinds_and_suffixes_and_keeps_its_setting(void) {
+    parse("rotary = half,reverse\n"
+          "rotary = gray\n"
+          "rotary = full,backwards\n"
+          "rotary = ,reverse\n"
+          "rotary =\n");
+    TEST_ASSERT_EQUAL_UINT(4, nwarn);
+    for (unsigned i = 0; i < 4; i++)
+        TEST_ASSERT_EQUAL_UINT(i + 2, warn_line[i]);
+    TEST_ASSERT_EQUAL_STRING("rotary must be full, half or quarter, optionally with ,reverse", warn_why[0]);
+    TEST_ASSERT_EQUAL(CONFIG_ROTARY_HALF, c.rotary);
+    TEST_ASSERT_TRUE(c.rotary_reverse);
+}
+
 /* --- IMAGE_x.CFG / INIT_x.CFG -------------------------------------------------------------------------- */
 
 static void test_the_image_path_is_the_first_real_line_trimmed(void) {
@@ -235,6 +281,10 @@ int main(void) {
     RUN_TEST(test_a_line_too_long_is_reported_not_read);
     RUN_TEST(test_without_a_warning_callback_bad_lines_are_still_ignored);
     RUN_TEST(test_text_is_read_only_up_to_its_length);
+    RUN_TEST(test_show_commands_is_off_by_default_and_takes_yes_or_no);
+    RUN_TEST(test_rotary_is_full_and_forward_by_default);
+    RUN_TEST(test_rotary_takes_each_kind_with_or_without_reverse);
+    RUN_TEST(test_rotary_refuses_other_kinds_and_suffixes_and_keeps_its_setting);
     RUN_TEST(test_the_image_path_is_the_first_real_line_trimmed);
     RUN_TEST(test_an_image_path_may_be_quoted_and_needs_no_line_ending);
     RUN_TEST(test_no_image_path_in_an_empty_or_comment_only_file);

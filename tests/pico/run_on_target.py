@@ -45,6 +45,21 @@ TCL_PORT = 6666
 
 PROBE_USB_ID = (0x2E8A, 0x000C)  # Raspberry Pi Debugprobe (CMSIS-DAP): its USB serial port bridges the console
 
+# Resetting the RP2350 (docs/testing.md, "Resetting the Pico 2"). OpenOCD's `reset` asserts SYSRESETREQ on each core in
+# turn, 50 ms apart, and on the RP2350 SYSRESETREQ resets only its own core (datasheet; raspberrypi/openocd PR 153).
+# With core 1 running from flash meanwhile, it collides with core 0's boot ROM driving the flash in direct mode:
+# measured on this firmware, about 1 reset in 6 leaves the QMI stuck busy, and the chip then needs a power cycle
+# or the rescue reset. So nothing here resets a running chip with OpenOCD's `reset`:
+#   - RESET_CHIP is the reset the SDK's watchdog_reboot() does: every block but the oscillators (PSM WDSEL),
+#     both cores and the QMI together, with watchdog scratch 4 cleared so the boot ROM doesn't take it for a
+#     reboot-to-address. 0 of 90 such resets failed where 5 of 30 OpenOCD resets did.
+#   - flashing halts both cores first, so neither is running when OpenOCD resets them (as hathach/agentrc
+#     found for `program`), then starts the new firmware with RESET_CHIP.
+PSM_WDSEL, WDSEL_ALL_BUT_OSCILLATORS = 0x40018008, 0x01FFFFF3
+WATCHDOG_CTRL, WATCHDOG_SCRATCH4, WATCHDOG_TRIGGER = 0x400D8000, 0x400D801C, 0x80000000
+RESET_CHIP = (f"mww 0x{PSM_WDSEL:08x} 0x{WDSEL_ALL_BUT_OSCILLATORS:08x}; mww 0x{WATCHDOG_SCRATCH4:08x} 0; "
+              f"mww 0x{WATCHDOG_CTRL:08x} 0x{WATCHDOG_TRIGGER:08x}")
+
 
 def find_port(what, given=None):
     """The serial port for 'console' (the probe's bridge to the target's debug console) or 'link' (the USB serial
@@ -78,13 +93,31 @@ def tcl(sock, cmd):
 
 
 def flash(elf, server):
+    """Programs elf and starts it: both cores halted first, then the whole chip reset (RESET_CHIP, above)."""
+    program = f"targets rp2350.dap.core0; halt; program {{{elf}}} verify"
     if server:
-        result = tcl(server, "catch {program {%s} verify reset}" % elf)
-        if result != "0":
+        if tcl(server, "catch {%s}" % program) != "0":
             raise RuntimeError(f"OpenOCD could not program {elf.name}")
+        reset_chip(server)
     else:
-        subprocess.run(OPENOCD + ["-c", f"program {elf} verify reset exit"], check=True,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120)
+        # the trigger's own write is cut short by the reset it causes, so it is in a catch
+        cmds = ["init", program, "catch {%s}" % RESET_CHIP, "sleep 100", "catch {targets rp2350.dap.core0; resume}",
+                "exit"]
+        subprocess.run(OPENOCD + [a for c in cmds for a in ("-c", c)], check=True, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL, timeout=120)
+
+
+def reset_chip(server):
+    """Restarts the firmware: the whole chip at once, never OpenOCD's core-by-core `reset`. The trigger's own write is
+    cut short by the reset it causes, so its result means nothing."""
+    tcl(server, "catch {%s}" % RESET_CHIP)
+    resume_if_halted(server)
+
+
+def resume_if_halted(server):
+    """After RESET_CHIP the cores run, unless the debugger had halted them, as flash() does: then resume them."""
+    time.sleep(0.1)
+    tcl(server, "catch {targets rp2350.dap.core0; resume}")
 
 
 def run_module(name, elf, port, server, timeout, log):

@@ -83,6 +83,9 @@ void config_defaults(config_t *c) {
     for (unsigned d = 0; d < IDC_PHYS_DRIVES; d++)
         c->drive_type[d] = IDC_DRIVE_FOLLOW_IMAGE;
     strcpy(c->idc_rom, "IDC.ROM");
+    c->rotary = CONFIG_ROTARY_FULL;
+    c->rotary_reverse = false;
+    c->show_commands = false;
 }
 
 static void warn_line(config_warn_fn warn, void *ctx, unsigned line, const char *why) {
@@ -96,6 +99,27 @@ static bool parse_drive_type(span_t v, idc_drive_type_t *out) {
         *out = IDC_DRIVE_40_TRACK;
     } else if (is(v, "80")) {
         *out = IDC_DRIVE_80_TRACK;
+    } else {
+        return false;
+    }
+    return true;
+}
+
+/* "full", "half" or "quarter", then optionally ",reverse" (FlashFloppy's rotary option). */
+static bool parse_rotary(span_t v, config_rotary_t *kind, bool *reverse) {
+    const char *comma = memchr(v.p, ',', v.n);
+    span_t k = trim((span_t){v.p, comma ? (size_t)(comma - v.p) : v.n});
+    *reverse = false;
+    if (comma) {
+        if (!is(trim((span_t){comma + 1, v.n - (size_t)(comma - v.p) - 1}), "reverse")) return false;
+        *reverse = true;
+    }
+    if (is(k, "full")) {
+        *kind = CONFIG_ROTARY_FULL;
+    } else if (is(k, "half")) {
+        *kind = CONFIG_ROTARY_HALF;
+    } else if (is(k, "quarter")) {
+        *kind = CONFIG_ROTARY_QUARTER;
     } else {
         return false;
     }
@@ -129,6 +153,20 @@ static const char *parse_option(config_t *c, span_t key, span_t v) {
         if (v.n == 0 || v.n >= sizeof c->idc_rom) return "idc-rom must be a path of up to 255 characters";
         memcpy(c->idc_rom, v.p, v.n);
         c->idc_rom[v.n] = '\0';
+    } else if (is(key, "show-commands")) {
+        if (is(v, "yes")) {
+            c->show_commands = true;
+        } else if (is(v, "no")) {
+            c->show_commands = false;
+        } else {
+            return "show-commands must be yes or no";
+        }
+    } else if (is(key, "rotary")) {
+        config_rotary_t kind;
+        bool reverse;
+        if (!parse_rotary(v, &kind, &reverse)) return "rotary must be full, half or quarter, optionally with ,reverse";
+        c->rotary = kind;
+        c->rotary_reverse = reverse;
     } else {
         return "unknown option";
     }

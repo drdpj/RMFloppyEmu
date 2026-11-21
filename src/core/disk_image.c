@@ -44,19 +44,39 @@ bool disk_image_kind_from_name(const char *name, disk_image_kind_t *kind) {
     return false;
 }
 
-disk_status_t disk_image_open(disk_image_t *im, disk_image_kind_t kind, const disk_image_io_t *io, uint32_t file_len,
-                              bool read_only, uint8_t *cells, uint32_t cells_cap) {
+disk_status_t disk_image_open_begin(disk_image_t *im, disk_image_kind_t kind, const disk_image_io_t *io,
+                                    uint32_t file_len, bool read_only, uint8_t *cells, uint32_t cells_cap) {
     RMFE_ASSERT(im && io && io->read && io->write);
     im->kind = kind;
     im->io = io;
     im->read_only = read_only;
     switch (kind) {
         case DISK_IMAGE_IMD:
-            return disk_imd_open(&im->imd, io->read, io->ctx, file_len);
+            return disk_imd_open_begin(&im->imd, io->read, io->ctx, file_len);
         case DISK_IMAGE_HFE:
-            return disk_hfe_open(&im->hfe, io->read, io->ctx, cells, cells_cap);
+            return disk_hfe_open(&im->hfe, io->read, io->ctx, cells, cells_cap); /* the header: one read */
     }
     return DISK_ERR_FORMAT;
+}
+
+disk_status_t disk_image_open_step(disk_image_t *im, bool *done) {
+    RMFE_ASSERT(im && done);
+    switch (im->kind) {
+        case DISK_IMAGE_IMD:
+            return disk_imd_open_step(&im->imd, done);
+        case DISK_IMAGE_HFE:
+            *done = true;
+            return DISK_OK;
+    }
+    return DISK_ERR_FORMAT;
+}
+
+disk_status_t disk_image_open(disk_image_t *im, disk_image_kind_t kind, const disk_image_io_t *io, uint32_t file_len,
+                              bool read_only, uint8_t *cells, uint32_t cells_cap) {
+    disk_status_t st = disk_image_open_begin(im, kind, io, file_len, read_only, cells, cells_cap);
+    for (bool done = false; st == DISK_OK && !done;)
+        st = disk_image_open_step(im, &done);
+    return st;
 }
 
 unsigned disk_image_cylinders(const disk_image_t *im) {

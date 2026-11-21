@@ -56,7 +56,13 @@ typedef struct {
 static FATFS fs;
 static bool mounted;
 static char cfg_dir[8] = ""; /* "" or "RMFE/": where RMFE.CFG and the IMAGE and INIT files are */
-static sd_drive_t drives[IDC_PHYS_DRIVES];
+/* Three slots: the two drives' images, and one being opened for the menu (core/ui.h), a step at a time between
+ * commands, which then takes a drive's place. */
+static sd_drive_t slots[IDC_PHYS_DRIVES + 1];
+static sd_drive_t *drives[IDC_PHYS_DRIVES];
+static sd_drive_t *opening; /* the slot being opened, or NULL */
+static unsigned opening_for;
+static const config_t *cfg;       /* the settings in force (sd_store_insert_startup_images) */
 static uint8_t cells[CELL_BYTES]; /* shared: the drives are only ever used one at a time */
 static char text[TEXT_MAX];
 
@@ -207,22 +213,22 @@ static void d_replace_abort(void *ctx) {
 
 static bool s_present(void *ctx, unsigned drive) {
     (void)ctx;
-    return drive < IDC_PHYS_DRIVES && drives[drive].present;
+    return drive < IDC_PHYS_DRIVES && drives[drive]->present;
 }
 
 static unsigned s_cylinders(void *ctx, unsigned drive) {
     (void)ctx;
-    return disk_image_cylinders(&drives[drive].img);
+    return disk_image_cylinders(&drives[drive]->img);
 }
 
 static disk_status_t s_load(void *ctx, unsigned drive, unsigned cyl, unsigned side, disk_track_t *t) {
     (void)ctx;
-    return disk_image_load(&drives[drive].img, cyl, side, t);
+    return disk_image_load(&drives[drive]->img, cyl, side, t);
 }
 
 static disk_status_t s_save(void *ctx, unsigned drive, const disk_track_t *t) {
     (void)ctx;
-    sd_drive_t *d = &drives[drive];
+    sd_drive_t *d = drives[drive];
     disk_status_t st = disk_image_save(&d->img, t);
     if (st == DISK_OK && f_sync(&d->f) != FR_OK) st = DISK_ERR_IO; /* on the card before the 480Z hears OK */
     if (st != DISK_OK && st != DISK_ERR_READ_ONLY)
@@ -233,7 +239,7 @@ static disk_status_t s_save(void *ctx, unsigned drive, const disk_track_t *t) {
 /* Each disc turns at 300 rpm from when its image went in. */
 static uint32_t s_position(void *ctx, unsigned drive) {
     (void)ctx;
-    uint64_t cells_since = (time_us_64() - drives[drive].index_us) / US_PER_CELL;
+    uint64_t cells_since = (time_us_64() - drives[drive]->index_us) / US_PER_CELL;
     return (uint32_t)(cells_since % DISK_CELLS_PER_REV);
 }
 
@@ -245,11 +251,16 @@ const idc_drives_t *sd_store_drives(void) {
 
 /* ---- putting images in ----------------------------------------------------------------------------- */
 
-static bool open_drive(unsigned n, const char *path, const config_t *c) {
-    sd_drive_t *d = &drives[n];
+/* Starts opening the image at path into slot d, for the drive with that letter: the checks, finishing or deleting
+ * an interrupted save, opening the file and the first step of reading it (disk_image_open_begin). On failure *why
+ * says why in a few words (for the menu), and the console has the details. */
+static bool open_begin(sd_drive_t *d, char letter, const char *path, const config_t *c, const char **why) {
+    d->letter = letter;
+    d->present = false;
     disk_image_kind_t kind;
     if (strlen(path) >= sizeof d->path || !disk_image_kind_from_name(path, &kind)) {
-        printf("SD: %c: %s isn't an IMD or HFE image\n", d->letter, path);
+        printf("SD: %c: %s isn't an IMD or HFE image\n", letter, path);
+        *why = "not an IMD or HFE image";
         return false;
     }
     snprintf(d->new_path, sizeof d->new_path, "%s%s", path, NEW_SUFFIX);
@@ -257,32 +268,64 @@ static bool open_drive(unsigned n, const char *path, const config_t *c) {
     bool have_new = exists(d->new_path, &fi);
     if (!exists(path, &fi)) {
         if (!have_new || f_rename(d->new_path, path) != FR_OK || !exists(path, &fi)) {
-            printf("SD: %c: %s isn't on the card\n", d->letter, path);
+            printf("SD: %c: %s isn't on the card\n", letter, path);
+            *why = "not on the card";
             return false;
         }
-        printf("SD: %c: finished saving %s, interrupted when the power went\n", d->letter, path);
+        printf("SD: %c: finished saving %s, interrupted when the power went\n", letter, path);
     } else if (have_new) {
         (void)f_unlink(d->new_path);
-        printf("SD: %c: deleted %s, an unfinished save; the image is as it was before it\n", d->letter, d->new_path);
+        printf("SD: %c: deleted %s, an unfinished save; the image is as it was before it\n", letter, d->new_path);
     }
     cache_forget(d);
     bool read_only = c->write_protect || (fi.fattrib & AM_RDO);
     if (f_open(&d->f, path, FA_READ | (read_only ? 0 : FA_WRITE)) != FR_OK) {
-        printf("SD: %c: can't open %s\n", d->letter, path);
+        printf("SD: %c: can't open %s\n", letter, path);
+        *why = "can't open it";
         return false;
     }
     strcpy(d->path, path);
     d->io = (disk_image_io_t){d, d_read, d_write, d_replace_begin, d_replace_sink, d_replace_commit, d_replace_abort};
-    disk_status_t st = disk_image_open(&d->img, kind, &d->io, (uint32_t)f_size(&d->f), read_only, cells, sizeof cells);
+    disk_status_t st =
+        disk_image_open_begin(&d->img, kind, &d->io, (uint32_t)f_size(&d->f), read_only, cells, sizeof cells);
     if (st != DISK_OK) {
         (void)f_close(&d->f);
-        printf("SD: %c: %s isn't a usable image (%d)\n", d->letter, path, st);
+        printf("SD: %c: %s isn't a usable image (%d)\n", letter, path, st);
+        *why = "not a usable image";
         return false;
     }
+    return true;
+}
+
+/* One more step of opening: a track record (disk_image_open_step). */
+static bool open_step(sd_drive_t *d, bool *done, const char **why) {
+    disk_status_t st = disk_image_open_step(&d->img, done);
+    if (st == DISK_OK) return true;
+    (void)f_close(&d->f);
+    cache_forget(d);
+    printf("SD: %c: %s isn't a usable image (%d)\n", d->letter, d->path, st);
+    *why = "not a usable image";
+    return false;
+}
+
+/* The image is open: it is in the drive, and the disc starts turning. */
+static void open_finish(sd_drive_t *d) {
     d->present = true;
     d->index_us = time_us_64();
-    printf("SD: %c: %s (%s, %u cylinders%s)\n", d->letter, path, kind == DISK_IMAGE_HFE ? "HFE" : "IMD",
-           disk_image_cylinders(&d->img), read_only ? ", write-protected" : "");
+    printf("SD: %c: %s (%s, %u cylinders%s)\n", d->letter, d->path, d->img.kind == DISK_IMAGE_HFE ? "HFE" : "IMD",
+           disk_image_cylinders(&d->img), d->img.read_only ? ", write-protected" : "");
+}
+
+/* The whole of it at once: at start-up, when nothing waits. */
+static bool open_drive(unsigned n, const char *path, const config_t *c) {
+    sd_drive_t *d = drives[n];
+    const char *why;
+    bool done = false;
+    if (!open_begin(d, (char)('A' + n), path, c, &why)) return false;
+    while (!done) {
+        if (!open_step(d, &done, &why)) return false;
+    }
+    open_finish(d);
     return true;
 }
 
@@ -311,7 +354,7 @@ static bool named_image(unsigned n, const config_t *c, char path[CONFIG_PATH_MAX
                                                                       : NULL;
     if (!stem) return false;
     char name[16];
-    snprintf(name, sizeof name, "%s_%c.CFG", stem, drives[n].letter);
+    snprintf(name, sizeof name, "%s_%c.CFG", stem, drives[n]->letter);
     size_t len;
     if (!read_text(name, &len)) return false;
     if (config_image_path(text, len, path, CONFIG_PATH_MAX)) return true;
@@ -321,21 +364,23 @@ static bool named_image(unsigned n, const config_t *c, char path[CONFIG_PATH_MAX
 
 void sd_store_insert_startup_images(const config_t *c) {
     char path[CONFIG_PATH_MAX];
+    cfg = c;
     for (unsigned n = 0; n < IDC_PHYS_DRIVES; n++) {
-        drives[n].letter = (char)('A' + n);
-        drives[n].present = false;
+        drives[n] = &slots[n];
+        drives[n]->letter = (char)('A' + n);
+        drives[n]->present = false;
     }
     if (!mounted) return;
     for (unsigned n = 0; n < IDC_PHYS_DRIVES; n++) {
         bool named = named_image(n, c, path);
-        if (named && n == 1 && drives[0].present && config_compare_names(path, drives[0].path) == 0) {
+        if (named && n == 1 && drives[0]->present && config_compare_names(path, drives[0]->path) == 0) {
             printf("SD: B: %s is already in A\n", path);
             continue;
         }
         if (named && open_drive(n, path, c)) continue;
         /* init, or the named image wouldn't go in: A gets the first image on the card, B none */
         if (n == 0 && first_listed_image(path)) (void)open_drive(n, path, c);
-        if (!drives[n].present) printf("SD: %c: empty\n", drives[n].letter);
+        if (!drives[n]->present) printf("SD: %c: empty\n", drives[n]->letter);
     }
 }
 
@@ -403,4 +448,132 @@ bool sd_store_read_rom(const config_t *c, uint8_t rom[SD_STORE_ROM_MAX], size_t 
     }
     printf("SD: no IDC ROM: command FF (the boot block) will be answered as unknown\n");
     return false;
+}
+
+/* ---- the menu's work, a step at a time (core/ui.h requests; sd_store.h) ----------------------------------------- */
+
+static DIR list_dir;
+static bool listing;
+
+bool sd_store_list_begin(const char *folder) {
+    if (listing) (void)f_closedir(&list_dir);
+    listing = false;
+    if (!mounted) return false;
+    char path[CONFIG_PATH_MAX + 1];
+    snprintf(path, sizeof path, "/%s", folder);
+    FRESULT fr = f_opendir(&list_dir, path);
+    if (fr != FR_OK) {
+        printf("SD: can't list %s (FatFs %d)\n", path, fr);
+        return false;
+    }
+    listing = true;
+    return true;
+}
+
+sd_step_t sd_store_list_step(dirlist_t *l) {
+    if (!listing) return SD_STEP_FAILED;
+    FILINFO fi;
+    FRESULT fr = f_readdir(&list_dir, &fi);
+    if (fr != FR_OK || !fi.fname[0]) {
+        (void)f_closedir(&list_dir);
+        listing = false;
+        if (fr != FR_OK) printf("SD: listing a folder failed (FatFs %d)\n", fr);
+        return fr == FR_OK ? SD_STEP_DONE : SD_STEP_FAILED;
+    }
+    (void)dirlist_add(l, fi.fname, (fi.fattrib & AM_DIR) != 0, (fi.fattrib & AM_HID) != 0);
+    return SD_STEP_MORE;
+}
+
+bool sd_store_insert_begin(unsigned drive, const char *path, const char **why) {
+    if (!mounted || !cfg) {
+        *why = "no SD card";
+        return false;
+    }
+    for (unsigned n = 0; n < IDC_PHYS_DRIVES; n++) {
+        if (n != drive && drives[n]->present && config_compare_names(drives[n]->path, path) == 0) {
+            *why = "it is in the other drive"; /* docs/sd-card.md: the same image can't be in both */
+            return false;
+        }
+    }
+    /* the free slot: the one neither drive uses */
+    opening = NULL;
+    for (unsigned k = 0; k < IDC_PHYS_DRIVES + 1u && !opening; k++) {
+        if (&slots[k] != drives[0] && &slots[k] != drives[1]) opening = &slots[k];
+    }
+    opening_for = drive;
+    if (!open_begin(opening, (char)('A' + drive), path, cfg, why)) {
+        opening = NULL;
+        return false;
+    }
+    return true;
+}
+
+sd_step_t sd_store_insert_step(const char **why) {
+    if (!opening) return SD_STEP_FAILED;
+    bool done = false;
+    if (!open_step(opening, &done, why)) {
+        opening = NULL;
+        return SD_STEP_FAILED;
+    }
+    return done ? SD_STEP_DONE : SD_STEP_MORE;
+}
+
+/* Takes a drive's image out: its file closed, the drive empty. */
+static void take_out(unsigned drive) {
+    sd_drive_t *d = drives[drive];
+    if (!d->present) return;
+    cache_forget(d);
+    if (f_close(&d->f) != FR_OK) printf("SD: %c: closing %s failed\n", d->letter, d->path);
+    d->present = false;
+    printf("SD: %c: %s taken out\n", d->letter, d->path);
+}
+
+void sd_store_insert_commit(void) {
+    if (!opening) return;
+    unsigned drive = opening_for;
+    take_out(drive);
+    drives[drive] = opening;
+    opening = NULL;
+    open_finish(drives[drive]);
+}
+
+void sd_store_eject(unsigned drive) {
+    take_out(drive);
+    printf("SD: %c: empty\n", drives[drive]->letter);
+}
+
+bool sd_store_save_choice(unsigned drive) {
+    if (!mounted) return false;
+    char name[sizeof cfg_dir + 16];
+    snprintf(name, sizeof name, "%sIMAGE_%c.CFG", cfg_dir, (char)('A' + drive));
+    FIL f;
+    if (f_open(&f, name, FA_CREATE_ALWAYS | FA_WRITE) != FR_OK) {
+        printf("SD: can't write %s\n", name);
+        return false;
+    }
+    const sd_drive_t *d = drives[drive];
+    UINT put = 0;
+    bool ok = true;
+    if (d->present) {
+        size_t n = strlen(d->path);
+        ok = f_write(&f, d->path, (UINT)n, &put) == FR_OK && put == n && f_write(&f, "\n", 1, &put) == FR_OK;
+    }
+    ok = f_close(&f) == FR_OK && ok;
+    if (!ok) printf("SD: writing %s failed\n", name);
+    return ok;
+}
+
+void sd_store_unit(ui_unit_t *u) {
+    memset(u, 0, sizeof *u);
+    u->card = mounted;
+    for (unsigned n = 0; n < IDC_PHYS_DRIVES; n++) {
+        const sd_drive_t *d = drives[n];
+        ui_drive_t *out = &u->drive[n];
+        if (!d || !d->present) continue;
+        out->present = true;
+        out->read_only = d->img.read_only;
+        out->hfe = d->img.kind == DISK_IMAGE_HFE;
+        out->cylinders = disk_image_cylinders(&d->img);
+        strcpy(out->path, d->path);
+    }
 }

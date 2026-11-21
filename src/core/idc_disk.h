@@ -22,6 +22,9 @@
 
 #include "core/idc.h"
 
+/* Tells the activity hook which drive (and track and third byte) the command is for (idc.c). */
+void idc_note_drive(idc_t *d, unsigned phys, unsigned side, bool has_track, uint8_t track, uint8_t third);
+
 link_status_t idc_cmd_login(idc_t *d);
 link_status_t idc_cmd_read(idc_t *d);
 link_status_t idc_cmd_write(idc_t *d);

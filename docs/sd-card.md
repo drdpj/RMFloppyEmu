@@ -41,12 +41,36 @@ same image can't go in both drives.
 
 An `IMAGE` or `INIT` file holds one line: the image's path from the root of the card, such as
 `480Z_RML_system-cpm2.2f-basic5.3g-basic6.3b.imd` or `games/Dragon World.IMD`. Blank lines and lines starting
-with `#` are skipped. Until the display and knob arrive, you edit these files on a PC. The display will then write
-`IMAGE_A.CFG` and `IMAGE_B.CFG` itself, as FlashFloppy does.
+with `#` are skipped. The menu writes `IMAGE_A.CFG` and `IMAGE_B.CFG` whenever an image is chosen, as FlashFloppy
+does; emptying a drive leaves its file empty. `INIT` files are only ever edited on a PC.
 
-The image list, used by `init` and later by the display, follows FlashFloppy's native mode. It shows `.imd` and
-`.hfe` files, sorted by name ignoring case, and leaves out names starting with `.` (such as macOS's `._` files) and
+The image list, used by `init` and by the menu, follows FlashFloppy's native mode. It shows `.imd` and `.hfe`
+files, sorted by name ignoring case, and leaves out names starting with `.` (such as macOS's `._` files) and
 hidden files.
+
+## Choosing an image
+
+The display shows what each drive holds, with a light under each: "reading" (green) or "writing" (orange) and
+the track, while the 480Z uses that drive and for a moment after, like a real drive's light. With
+`show-commands = yes` it also shows each command as the unit serves it: its byte and name, the drive and side,
+the track, and the record (`R`), sector ID (`S`) or sector count (`N`), with a count of the commands so far, such
+as `02 read  A/0 T12 R5  #1234`. The knob picks a drive (turn) and opens a list of images for it (press),
+starting in the folder of the image it holds. In the list:
+
+- turn to move, and press to open a folder or choose an image;
+- `../` goes up a folder, and `(eject)` empties the drive;
+- `*` marks the image in this drive, and `A` or `B` the image in the other drive, which can't be chosen;
+- a long press (about a second), or half a minute without touching the knob, goes back.
+
+Folders come first, then images, each sorted by name ignoring case (FlashFloppy's `sort-priority = folders`), and
+up to 512 entries a folder are shown. A name too long for the screen scrolls while the cursor is on it.
+
+**What the 480Z sees.** A new image goes in at once, between two of the 480Z's commands, never during one. The next
+command finds the new disc, as if it had been changed in an instant; an emptied drive answers "not ready" (`80`),
+as with no disc in it. Anything the 480Z had written that was still in the unit's cache for that drive goes to the
+old image first. The protocol has no way to tell the 480Z the disc has changed, so, as with a real MD1, CP/M needs
+a ^C (warm boot) after a change before it writes to that drive: until then it takes the new disc as read-only
+("BDOS ERR ON B: R/O"). While the unit opens the new image, the old one carries on serving the 480Z.
 
 ## RMFE.CFG
 
@@ -64,6 +88,10 @@ write-protect = no
 drive-a = auto
 drive-b = auto
 idc-rom = IDC.ROM
+# rotary: full | half | quarter, optionally followed by ,reverse
+rotary = full
+# show-commands: yes | no
+show-commands = no
 ```
 
 A `#` starts a comment only at the beginning of a line, because a path may contain one.
@@ -74,6 +102,8 @@ A `#` starts a comment only at the beginning of a line, because a path may conta
 | `write-protect` | `yes`, `no` | `no` | `yes`: every image is write-protected. `no`: an image is write-protected if it has the FAT read-only attribute (as FlashFloppy) |
 | `drive-a`, `drive-b` | `auto`, `40`, `80` | `auto` | the drive's type, which a real IDC took from links on its board. `auto`: 80-track for an image with more than 44 cylinders |
 | `idc-rom` | a path | `IDC.ROM` | the IDC ROM image |
+| `show-commands` | `yes`, `no` | `no` | `yes`: the display also shows each command as the unit serves it (above) |
+| `rotary` | `full`, `half`, `quarter`, each optionally followed by `,reverse` | `full` | the knob, as FlashFloppy's option: one step per detent of an encoder with as many detents as pulses (an EC11; `full`), or per half or quarter of a pulse. `,reverse` turns it round, for an encoder that steps the wrong way |
 
 ## Writes
 
@@ -89,5 +119,18 @@ Writes go to the image on the card as the 480Z makes them, and are on the card b
   goes only once the new one is complete. If the power fails in the gap between deleting the old and renaming the
   new, the next start finishes the rename; a `.new` left beside an intact image is an unfinished one and is
   deleted. Both are reported on the console.
+
+**Blank discs.** Format onto an image already laid out as RM's FORMAT lays it out, made with
+`tools/imd/make_blank.py` (40 or 80 cylinders, one or two sides): every track then formats in place. Measured with
+drive B, MFM tracks (2026-11-21):
+
+| Image | Format a track | Write a record, then `08` | Read a new track |
+|---|---|---|---|
+| blank IMD from `make_blank.py` | 0.06 s | 82 + 671 ms the first time (the one rewrite), then as below | 32 ms |
+| IMD after its rewrite (uncompressed) | 0.12 s | 81 + 137 ms | 32 ms |
+| HFE | 0.29 s | 173 + 188 ms | 124 ms |
+
+An empty IMD, or one in another layout, makes the first format of each missing or different track rewrite the whole
+image: a second or more each time. HFE never needs a rewrite, but every write and every track change costs more.
 
 Don't take the card out while the 480Z is writing. Changing the card while the unit is running isn't supported yet.

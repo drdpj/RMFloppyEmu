@@ -31,6 +31,7 @@
 #ifndef RMFE_CORE_DISK_IMD_H
 #define RMFE_CORE_DISK_IMD_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #include "core/disk.h"
@@ -44,9 +45,19 @@ typedef struct {
     uint32_t first_track;                     /* offset of the first track record */
     uint32_t track_off[DISK_IMD_MAX_CYLS][2]; /* 0: no record for that cylinder/side */
     uint8_t cylinders, sides;                 /* 1 + highest cylinder / side with a record */
+    uint32_t scan_at;                         /* while opening in steps: the next track record to index */
 } disk_imd_t;
 
+/* Opens an image: checks the header and indexes every track record. The same as disk_imd_open_begin() followed by
+ * disk_imd_open_step() until done. */
 disk_status_t disk_imd_open(disk_imd_t *img, disk_read_fn read, void *ctx, uint32_t file_len);
+
+/* Opening in steps, so the platform can open an image a little at a time between other work (docs/plan.md,
+ * milestone 6: the 480Z must not wait while an image is opened). begin checks the header; each step indexes one
+ * track record and sets *done once the whole file is indexed. The image is usable only once done; an error at any
+ * step means it isn't an image (as disk_imd_open would have said). */
+disk_status_t disk_imd_open_begin(disk_imd_t *img, disk_read_fn read, void *ctx, uint32_t file_len);
+disk_status_t disk_imd_open_step(disk_imd_t *img, bool *done);
 
 /* Loads one track. A cylinder/side with no record loads as an empty (unformatted) track. */
 disk_status_t disk_imd_load(const disk_imd_t *img, unsigned cyl, unsigned side, disk_track_t *out);

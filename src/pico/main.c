@@ -17,19 +17,32 @@
  */
 
 /*
- * The MD1 replacement's firmware. One core, for now: it serves the 480Z's commands over the link
- * (pico/link_uart.c) with the command layer (core/idc.h), from the images and IDC ROM on the SD card
- * (pico/sd_store.c, configured as docs/sd-card.md describes).
+ * The MD1 replacement's firmware: it serves the 480Z's commands over the link (pico/link_uart.c) with the command
+ * layer (core/idc.h), from the images and IDC ROM on the SD card (pico/sd_store.c, configured as docs/sd-card.md
+ * describes), and shows them on the display, where the knob chooses them (core/ui.h).
  *
- * Not yet here (docs/plan.md, milestone 6): the display and encoder, so images can only be chosen in the card's
- * files; changing the card while running.
+ * The two cores:
+ *   - Core 0 owns the 480Z's link (UART1 and its pins, the RTS interrupt), the command layer, and the SD card
+ *     (SPI0, FatFs, which is not re-entrant here). Between commands, while it waits for the next one, it does the
+ *     menu's work on the card a short step at a time (pico/menu_host.c), so a command waits at most one step for
+ *     it, and an image changes only between commands.
+ *   - Core 1 owns the display (SPI1 and a DMA channel), the knob (its pins and their interrupt) and the menu
+ *     (pico/panel.c). It never touches the link or the card, so drawing can't hold up the 480Z.
+ *   - They meet only in pico/mailbox.c. Each has its own 4 KB stack with the hardware limit at its bottom.
+ *   - Both print on the console; the SDK serialises that, so a line from core 1 can delay one from core 0, which
+ *     prints only at start-up, on errors and when an image changes.
+ * Not yet here (docs/plan.md, milestone 6): changing the card while running.
  */
 #include <stdio.h>
 
 #include "core/config.h"
 #include "core/idc.h"
 #include "pico/link_uart.h"
+#include "pico/mailbox.h"
+#include "pico/menu_host.h"
+#include "pico/panel.h"
 #include "pico/sd_store.h"
+#include "pico/stack_meter.h"
 #include "pico/stdlib.h"
 
 /* Static, never on the 4 KB stack (docs/plan.md): idc_t is 19.5 KB (two track caches). */
@@ -46,6 +59,7 @@ static void report_exec(void *ctx, uint16_t address, const uint8_t ram[IDC_RAM_B
 }
 
 int main(void) {
+    stack_meter_paint_core0();
     stdio_init_all();
     gpio_init(PICO_DEFAULT_LED_PIN);
     gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
@@ -66,6 +80,13 @@ int main(void) {
     idc_set_drives(&idc, sd_store_drives());
     for (unsigned d = 0; d < IDC_PHYS_DRIVES; d++)
         idc_set_drive_type(&idc, d, cfg.drive_type[d]);
+
+    mailbox_init();
+    menu_host_init(&idc, boot != NULL);
+    idc.idle_hook = menu_host_idle;
+    idc.activity_hook = mailbox_note_activity;
+    link_uart_set_idle(menu_host_poll);
+    panel_start(&cfg);
     printf("RMFloppyEmu: serving the 480Z link on UART1\n");
     gpio_put(PICO_DEFAULT_LED_PIN, 1);
 

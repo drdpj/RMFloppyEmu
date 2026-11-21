@@ -152,10 +152,39 @@ static link_status_t cmd_boot_block(idc_t *d) {
     return LINK_OK;
 }
 
+static void tell(idc_t *d, idc_act_stage_t stage) {
+    d->activity.stage = stage;
+    if (d->activity_hook) d->activity_hook(d->activity_ctx, &d->activity);
+}
+
+static link_status_t serve(idc_t *d, uint8_t c);
+
 link_status_t idc_serve_one(idc_t *d) {
     uint8_t c;
+    if (d->idle_hook) d->idle_hook(d->idle_ctx, true);
     link_status_t st = link_get(&d->link, &c);
+    if (d->idle_hook) d->idle_hook(d->idle_ctx, false);
     if (st != LINK_OK) return st;
+    memset(&d->activity, 0, sizeof d->activity);
+    d->activity.cmd = c;
+    tell(d, IDC_ACT_START);
+    st = serve(d, c);
+    tell(d, IDC_ACT_END);
+    return st;
+}
+
+void idc_note_drive(idc_t *d, unsigned phys, unsigned side, bool has_track, uint8_t track, uint8_t third) {
+    d->activity.has_drive = true;
+    d->activity.drive = (uint8_t)phys;
+    d->activity.side = (uint8_t)side;
+    d->activity.has_track = has_track;
+    d->activity.track = track;
+    d->activity.third = third;
+    tell(d, IDC_ACT_DRIVE);
+}
+
+static link_status_t serve(idc_t *d, uint8_t c) {
+    link_status_t st;
     d->sticky = IDC_STATUS_OK;
 
     uint8_t index = (uint8_t)(c - IDC_CMD_MONITOR);
@@ -211,6 +240,58 @@ link_status_t idc_serve_one(idc_t *d) {
             RMFE_ASSERT(!"command marked known without a handler");
             return LINK_OK;
     }
+}
+
+const char *idc_command_name(uint8_t cmd) {
+    switch (cmd) {
+        case IDC_CMD_MONITOR:
+            return "monitor";
+        case IDC_CMD_BOOT_BLOCK:
+            return "boot block";
+        case IDC_CMD_GO_FAST:
+            return "go fast";
+        case IDC_CMD_LOGIN:
+            return "log in";
+        case IDC_CMD_READ:
+            return "read";
+        case IDC_CMD_WRITE:
+            return "write";
+        case IDC_CMD_WRITE_VER:
+            return "write+verify";
+        case IDC_CMD_CONFIGURE:
+            return "configure";
+        case IDC_CMD_PROBE:
+            return "probe";
+        case IDC_CMD_SET_RETRIES:
+            return "retries";
+        case IDC_CMD_FLUSH:
+            return "flush";
+        case IDC_CMD_UPLOAD:
+            return "upload";
+        case IDC_CMD_EXECUTE:
+            return "execute";
+        case IDC_CMD_FORMAT:
+            return "format";
+        case IDC_CMD_VERIFY:
+            return "verify";
+        case IDC_CMD_READ_ID:
+            return "read sector";
+        case IDC_CMD_WRITE_ID:
+            return "write sector";
+        case IDC_CMD_WRITE_ID_V:
+            return "write sector+v";
+        case IDC_CMD_VERSION:
+            return "version";
+        case IDC_CMD_NOP:
+            return "nop";
+        default:
+            return "?";
+    }
+}
+
+bool idc_command_writes(uint8_t cmd) {
+    return cmd == IDC_CMD_WRITE || cmd == IDC_CMD_WRITE_VER || cmd == IDC_CMD_FLUSH || cmd == IDC_CMD_FORMAT ||
+           cmd == IDC_CMD_WRITE_ID || cmd == IDC_CMD_WRITE_ID_V;
 }
 
 void idc_set_drives(idc_t *d, const idc_drives_t *drives) {

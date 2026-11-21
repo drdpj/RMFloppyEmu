@@ -115,7 +115,43 @@ The approach is a C reimplementation of the disk unit's command set, with a stag
     - Found: the 480Z paces the unit with DTR, and the unit must stop within about a byte. Through USB the Pico
       learns too late, so the MAME device does the IDC's DTR gating itself (`docs/protocol.md`, "Flow control").
       In MAME the 480Z tolerates two bytes beyond the IDC's; the Pico sends at most one.
-    - **Next:** the display and encoder.
+  - Step 5, the display and encoder: started (2026-11-21). The pin plan was checked against the RP2350's function
+    table and the module's schematic, and corrected (`docs/hardware.md`): the module switches its own backlight
+    (an S8050 behind a 1 kΩ resistor), so GP22 drives `LED` directly and no transistor is needed; `VCC` comes from
+    VSYS, because VBUS is dead with the Pico's own USB unplugged; touch and the module's SD slot aren't used, which
+    frees GP27/GP28. The bring-up firmware is `tests/hil/display_probe.c`, run by `tests/hil/run_display_probe.py`
+    (`docs/testing.md` section 4). The font is misc-fixed 8x13 (public domain), made into C by `tools/font/pcf2c.py`.
+    - Wired and probed (2026-11-21): ILI9341, MISO working, colour bars and text right, backlight PWM and the
+      knob's clicks and press counted. Writes at 75 MHz were garbled (the probe first picked it from a short
+      read-back, and the status line showed it); a soak of 100 full-width strips is clean at 37.5 MHz and below.
+    - The display, knob and menu: working (2026-11-21).
+      - New in `src/core`, unit-tested: `rotary` (quadrature, switch debounce, long press; `rotary = full|half|
+        quarter[,reverse]` in `RMFE.CFG`, FlashFloppy's option), `dirlist` (a folder's listing, FlashFloppy's
+        order) and `ui` (the menu, driven by knob events and a tick count). `disk_imd`/`disk_image` open in steps
+        (one track record each), and `idc` reports the gap between commands (`idle_hook`), changes a disc
+        (`idc_change_disc`: the cached track goes to the old image first) and reports what it is doing
+        (`activity_hook`).
+      - The two cores (`src/pico/main.c`): core 0 keeps the link, the command layer and the SD card, and does the
+        menu's card work a step at a time while it waits for a command (`menu_host.c`); core 1 has the display
+        (`tft.c`: ILI9341 at 37.5 MHz, DMA, a 16-pixel text row at a time), the knob (GPIO interrupts) and the
+        menu (`panel.c`). They meet only in `mailbox.c`.
+      - Changing an image (owner, 2026-11-21): instant, between commands (`docs/protocol.md`, "Changing a disc";
+        `docs/sd-card.md`, "Choosing an image"). The display shows a light per drive (reading or writing, and the
+        track), and with `show-commands = yes` each command as it is served.
+      - Measured with the menu in use (`run_mame_linked.py --use-menu`: about ten keys a second, 535 folder lists
+        over the six scenarios): all six pass. The longest step of menu work on core 0 was 1.2 ms (a command could
+        have waited that long for it; the ROS waits about 145 ms). The bridge's turnaround at 125000 is as before
+        (median 0.47-0.55 ms) except in `format`, whose 90th percentile of 111 ms and maximum of 179 ms are the
+        formatting itself (each `0C` writes a track to the card), not the menu.
+      - Peak stack, measured by painting, with FatFs, the display and the menu all in: core 0 2156 of 4096 bytes,
+        core 1 2044 of 4096.
+      - Swapping drive B's image through the menu, an IMD for an HFE and back: the longest step was 15 ms.
+      - Found on the way: OpenOCD's `reset` resets the RP2350's cores one at a time, and with core 1 running from
+        flash in the gap, the QMI can stick busy, leaving the chip stuck in the boot ROM until a power cycle or a
+        rescue reset (5 of 30 resets). The test scripts now restart with a whole-chip watchdog reset (0 of 90) and
+        flash with both cores halted (`docs/testing.md`, "Resetting the Pico 2"). Only the debugger's reset is
+        affected; power-on, the RUN pin and the watchdog reset both cores together.
+    - **Next:** test on the real 480Z (`docs/acceptance.md`), and milestone 7, the transceiver.
 
 ## Decided (2026-11-20)
 

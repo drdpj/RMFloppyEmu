@@ -82,6 +82,9 @@ rmfe_add_test(test_disk)
 rmfe_add_test(test_disk_write)
 rmfe_add_test(test_disk_image)
 rmfe_add_test(test_ibm_encode)
+rmfe_add_test(test_rotary)
+rmfe_add_test(test_dirlist)
+rmfe_add_test(test_ui)
 
 # hfedump: prints what src/flux decodes from an HFE image (tools/hfedump).
 add_executable(hfedump ${RMFE_ROOT}/tools/hfedump/hfedump.c)

@@ -30,7 +30,9 @@
 #include <stdint.h>
 
 #include "core/config.h"
+#include "core/dirlist.h"
 #include "core/idc.h"
+#include "core/ui.h"
 
 #define SD_STORE_ROM_MAX 8192u /* an IDC ROM (2764) */
 
@@ -49,5 +51,39 @@ void sd_store_insert_startup_images(const config_t *c);
 
 /* The drives, for idc_set_drives(). A drive with no image isn't ready. */
 const idc_drives_t *sd_store_drives(void);
+
+/*
+ * The menu's work (core/ui.h requests), a step at a time: the firmware does it between the 480Z's commands, and a
+ * step must be short, because a command that arrives waits for it (docs/plan.md: the 480Z gives up after about
+ * 145 ms). Each step is one FatFs call or one track record of an IMD.
+ */
+typedef enum {
+    SD_STEP_MORE,
+    SD_STEP_DONE,
+    SD_STEP_FAILED,
+} sd_step_t;
+
+/* Lists a folder ("" the root, else its path without a leading "/"): begin, then step until done, each step
+ * offering one entry to the list (dirlist_add). */
+bool sd_store_list_begin(const char *folder);
+sd_step_t sd_store_list_step(dirlist_t *l);
+
+/* Opens an image for a drive, without touching what the drive holds: begin, then step until done. On failure *why
+ * says why in a few words. Refused if the other drive has that image. */
+bool sd_store_insert_begin(unsigned drive, const char *path, const char **why);
+sd_step_t sd_store_insert_step(const char **why);
+
+/* Puts the image just opened into its drive, taking the old one out. Only between commands, after
+ * idc_change_disc() for the drive. */
+void sd_store_insert_commit(void);
+
+/* Takes a drive's image out, leaving it empty. Only between commands, after idc_change_disc(). */
+void sd_store_eject(unsigned drive);
+
+/* Names the drive's image in IMAGE_x.CFG (empty if the drive is), as FlashFloppy remembers the last one chosen. */
+bool sd_store_save_choice(unsigned drive);
+
+/* What the drives hold, for the menu (ui_unit_t; rom is the caller's to fill). */
+void sd_store_unit(ui_unit_t *u);
 
 #endif

@@ -44,6 +44,7 @@
 /* Set by rts_irq() when the 480Z asserts RTS; read and cleared by take_reset() in the main loop, with
  * interrupts off. */
 static volatile bool reset_pending;
+static void (*idle_fn)(void); /* set by core 0 before serving; called only from lu_recv() on core 0 */
 static bool irq_installed;
 
 /* The PL011's divisors for the two rates, worked out at init by the SDK (uart_set_baudrate) */
@@ -124,7 +125,12 @@ static link_status_t __not_in_flash_func(lu_recv)(void *ctx, uint8_t *byte, bool
             *parity_error = (dr & UART_UARTDR_PE_BITS) != 0;
             return LINK_OK;
         }
+        if (idle_fn) idle_fn(); /* with CTS up: a byte arriving meanwhile waits in the FIFO */
     }
+}
+
+void link_uart_set_idle(void (*fn)(void)) {
+    idle_fn = fn;
 }
 
 static link_status_t __not_in_flash_func(lu_send)(void *ctx, uint8_t byte) {

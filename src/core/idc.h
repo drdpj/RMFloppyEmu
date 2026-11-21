@@ -144,6 +144,28 @@ typedef struct {
  */
 typedef void (*idc_exec_hook_t)(void *ctx, uint16_t address, const uint8_t ram[IDC_RAM_BYTES]);
 
+/*
+ * What the unit is doing, for a display (core/ui.h): told when a command starts, when a disc command's drive
+ * (and track and record, or sector ID or count) have come, and when it ends, however it ends. Nothing in the
+ * command layer depends on it.
+ */
+typedef enum {
+    IDC_ACT_START = 0, /* cmd is set */
+    IDC_ACT_DRIVE,     /* drive, side, and (has_track) track and third are set */
+    IDC_ACT_END,
+} idc_act_stage_t;
+
+typedef struct {
+    idc_act_stage_t stage;
+    uint8_t cmd;
+    bool has_drive;      /* a disc command, whose drive byte has come */
+    uint8_t drive, side; /* physical drive and side, after the drive map */
+    bool has_track;
+    uint8_t track, third; /* the track, and the record (02/03/04), sector ID (0E/0F/10) or count (0C/0D) */
+} idc_activity_t;
+
+typedef void (*idc_activity_hook_t)(void *ctx, const idc_activity_t *a);
+
 typedef struct {
     link_t link;
     const uint8_t *boot_block; /* sent for command FF (from the user's IDC ROM: idc_find_boot_block) */
@@ -154,6 +176,14 @@ typedef struct {
     uint8_t ram[IDC_RAM_BYTES];    /* the unit's RAM, as far as uploads (0A) are concerned */
     idc_exec_hook_t exec_hook;     /* optional */
     void *exec_ctx;
+    idc_activity_hook_t activity_hook; /* optional */
+    void *activity_ctx;
+    idc_activity_t activity;
+    /* Optional: told true just before the unit waits for a command byte, and false as soon as that wait ends.
+     * Between the two the unit is idle, with nothing in progress: the platform may change a disc then
+     * (idc_change_disc), or do other work in short steps while it waits (docs/plan.md, milestone 6). */
+    void (*idle_hook)(void *ctx, bool idle);
+    void *idle_ctx;
     const idc_drives_t *drives; /* NULL: no drives (every disc command answers not ready) */
     idc_cache_t cache[IDC_PHYS_DRIVES];
     idc_drive_type_t drive_type[IDC_PHYS_DRIVES];
@@ -173,12 +203,28 @@ void idc_set_drive_type(idc_t *d, unsigned drive, idc_drive_type_t type);
  * the first error as an IDC status byte, or IDC_STATUS_OK. */
 uint8_t idc_flush_all(idc_t *d);
 
+/*
+ * A drive's disc is changing (the platform is about to take its image out, or put another in): only between
+ * commands (see idle_hook). The drive's cached track is written back to the image it came from, as an 08 would,
+ * and then forgotten, so the next command reads the new disc and nothing meant for the old one reaches it.
+ * Returns the write-back's error as an IDC status (as 08 gives it, without bit 0), or IDC_STATUS_OK. The track
+ * is forgotten either way. The 480Z isn't told: the protocol has no disc-change signal (docs/protocol.md).
+ */
+uint8_t idc_change_disc(idc_t *d, unsigned drive);
+
 /* Waits for one command and serves it. LINK_RESET: the 480Z interrupted (the link is at 9600 again);
  * LINK_CLOSED: stop. */
 link_status_t idc_serve_one(idc_t *d);
 
 /* Serves commands until the link closes, starting afresh after every reset. */
 void idc_run(idc_t *d);
+
+/* A command's name, in a few lowercase words ("read", "boot block"), or "?" for a byte that isn't a command
+ * (docs/protocol.md, "Command table"). */
+const char *idc_command_name(uint8_t cmd);
+
+/* Whether a command writes to the disc: 03, 04, 08 (writing the cache back), 0C, 0F and 10. */
+bool idc_command_writes(uint8_t cmd);
 
 /*
  * The drive/flags parameter byte as the IDC reads it [IDC3 0f77]: if the low two bits are 01 or 10

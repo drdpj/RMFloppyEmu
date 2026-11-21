@@ -111,7 +111,7 @@ class Unit:
 def restart(server, console, far):
     """Resets the Pico and waits for it to serve again; returns its start-up report."""
     console.reset_input_buffer()
-    run_hil.run_on_target.tcl(server, "reset run")
+    run_hil.run_on_target.reset_chip(server)  # never OpenOCD's `reset` on a running RP2350 (run_on_target.py)
     lines, end = [], time.monotonic() + 10
     while time.monotonic() < end:
         line = console.readline().decode(errors="replace").rstrip()

@@ -38,6 +38,12 @@
  *       for an image with more than 44 cylinders.
  *   idc-rom = <path>                          (default IDC.ROM)
  *       The IDC ROM image the boot block (command FF) comes from (docs/hardware.md).
+ *   rotary = full | half | quarter [,reverse] (default full)
+ *       The knob, as FlashFloppy's option of the same name: one step per full quadrature cycle (an EC11 with as
+ *       many detents as pulses), per half cycle, or per quarter cycle (core/rotary.h). ",reverse" turns the other
+ *       way round, for an encoder wired or built the other way.
+ *   show-commands = yes | no                  (default no)
+ *       yes: the display also shows each command as the unit serves it (core/ui.h).
  *
  * The images listed (for init, and later the display) are as in FlashFloppy's native mode: .imd and .hfe files,
  * leaving out names starting with "." and hidden files, sorted by name ignoring case.
@@ -58,11 +64,20 @@ typedef enum {
     CONFIG_STARTUP_INIT,
 } config_startup_t;
 
+typedef enum {
+    CONFIG_ROTARY_FULL = 0,
+    CONFIG_ROTARY_HALF,
+    CONFIG_ROTARY_QUARTER,
+} config_rotary_t;
+
 typedef struct {
     config_startup_t image_on_startup;
     bool write_protect;
     idc_drive_type_t drive_type[IDC_PHYS_DRIVES];
     char idc_rom[CONFIG_PATH_MAX];
+    config_rotary_t rotary;
+    bool rotary_reverse;
+    bool show_commands;
 } config_t;
 
 /* Told of each line of RMFE.CFG that is ignored: its number (from 1) and why. */

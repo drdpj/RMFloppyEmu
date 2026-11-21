@@ -21,6 +21,7 @@ set(RMFE_ROOT ${CMAKE_CURRENT_LIST_DIR}/..)
 set(RMFE_CORE_SOURCES
     ${RMFE_ROOT}/src/core/bytes.c
     ${RMFE_ROOT}/src/core/config.c
+    ${RMFE_ROOT}/src/core/dirlist.c
     ${RMFE_ROOT}/src/core/disk.c
     ${RMFE_ROOT}/src/core/disk_hfe.c
     ${RMFE_ROOT}/src/core/disk_image.c
@@ -28,6 +29,8 @@ set(RMFE_CORE_SOURCES
     ${RMFE_ROOT}/src/core/idc.c
     ${RMFE_ROOT}/src/core/idc_disk.c
     ${RMFE_ROOT}/src/core/link.c
+    ${RMFE_ROOT}/src/core/rotary.c
+    ${RMFE_ROOT}/src/core/ui.c
     # src/flux: the self-contained track/image library (see src/flux/README.md)
     ${RMFE_ROOT}/src/flux/crc16.c
     ${RMFE_ROOT}/src/flux/flux_pll.c

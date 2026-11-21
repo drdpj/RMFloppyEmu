@@ -30,10 +30,13 @@ static uint8_t file[64 * 1024];
 static uint32_t flen;
 static disk_track_t t, t2;
 
+static uint32_t bytes_read; /* by mem_read, since a test last cleared it */
+
 static bool mem_read(void *ctx, uint32_t off, void *buf, uint32_t len) {
     (void)ctx;
     if (off > flen || len > flen - off) return false;
     memcpy(buf, file + off, len);
+    bytes_read += len;
     return true;
 }
 
@@ -227,6 +230,86 @@ static void test_imd_rejects_bad_files(void) {
     TEST_ASSERT_EQUAL(DISK_ERR_FORMAT, disk_imd_open(&img, mem_read, NULL, flen));
 }
 
+/* Three MFM tracks of 9 x 512, cylinders 0-2 on side 0, uncompressed: each track record is 5 + 9 + 9 x 513 bytes. */
+#define STEP_TRACK_BYTES (5u + 9u + 9u * 513u)
+static void imd_three_tracks(void) {
+    imd_begin();
+    for (uint8_t c = 0; c < 3; c++) {
+        const uint8_t hdr[] = {5, c, 0, 9, 2};
+        put(hdr, 5);
+        for (uint8_t i = 1; i <= 9; i++)
+            putb(i);
+        for (uint8_t i = 1; i <= 9; i++) {
+            putb(1);
+            memset(file + flen, (int)(c * 16u + i), 512);
+            flen += 512;
+        }
+    }
+}
+
+static void test_imd_open_in_steps_indexes_one_track_record_a_step(void) {
+    imd_three_tracks();
+    disk_imd_t whole, stepped;
+    TEST_ASSERT_EQUAL(DISK_OK, disk_imd_open(&whole, mem_read, NULL, flen));
+    TEST_ASSERT_EQUAL(DISK_OK, disk_imd_open_begin(&stepped, mem_read, NULL, flen));
+    bool done = false;
+    for (unsigned step = 1; step <= 3; step++) {
+        bytes_read = 0;
+        TEST_ASSERT_EQUAL(DISK_OK, disk_imd_open_step(&stepped, &done));
+        TEST_ASSERT_LESS_OR_EQUAL_UINT32(STEP_TRACK_BYTES, bytes_read); /* one track record's worth, at most */
+        TEST_ASSERT_EQUAL_UINT8(step, stepped.cylinders);
+        TEST_ASSERT_EQUAL(step == 3, done);
+    }
+    TEST_ASSERT_EQUAL_UINT8(whole.cylinders, stepped.cylinders);
+    TEST_ASSERT_EQUAL_UINT8(whole.sides, stepped.sides);
+    TEST_ASSERT_EQUAL_MEMORY(whole.track_off, stepped.track_off, sizeof whole.track_off);
+    TEST_ASSERT_EQUAL(DISK_OK, disk_imd_load(&stepped, 2, 0, &t));
+    TEST_ASSERT_EQUAL_UINT8(9, t.count);
+    TEST_ASSERT_EQUAL_HEX8(2u * 16u + 1u, t.data[t.secs[0].data_off]);
+}
+
+static void test_imd_open_step_after_done_stays_done(void) {
+    imd_begin(); /* a header and no tracks */
+    disk_imd_t img;
+    TEST_ASSERT_EQUAL(DISK_OK, disk_imd_open_begin(&img, mem_read, NULL, flen));
+    bool done = false;
+    TEST_ASSERT_EQUAL(DISK_OK, disk_imd_open_step(&img, &done));
+    TEST_ASSERT_TRUE(done);
+    TEST_ASSERT_EQUAL_UINT8(0, img.cylinders);
+    imd_three_tracks();
+    TEST_ASSERT_EQUAL(DISK_OK, disk_imd_open(&img, mem_read, NULL, flen));
+    bytes_read = 0;
+    TEST_ASSERT_EQUAL(DISK_OK, disk_imd_open_step(&img, &done));
+    TEST_ASSERT_TRUE(done);
+    TEST_ASSERT_EQUAL_UINT32(0, bytes_read);
+}
+
+static void test_imd_open_step_finds_the_errors_open_finds(void) {
+    disk_imd_t img;
+    bool done = false;
+    imd_begin();
+    file[0] = 'X';
+    TEST_ASSERT_EQUAL(DISK_ERR_FORMAT, disk_imd_open_begin(&img, mem_read, NULL, flen));
+    imd_begin();
+    const uint8_t hdr[] = {5, 0, 0, 1, 2}, id[] = {1};
+    for (int k = 0; k < 2; k++) { /* the same track twice: the second step finds it */
+        put(hdr, 5);
+        put(id, 1);
+        putb(2);
+        putb(0);
+    }
+    TEST_ASSERT_EQUAL(DISK_OK, disk_imd_open_begin(&img, mem_read, NULL, flen));
+    TEST_ASSERT_EQUAL(DISK_OK, disk_imd_open_step(&img, &done));
+    TEST_ASSERT_FALSE(done);
+    TEST_ASSERT_EQUAL(DISK_ERR_FORMAT, disk_imd_open_step(&img, &done));
+    imd_begin();
+    put(hdr, 5);
+    put(id, 1);
+    putb(1); /* 512 bytes promised, none present */
+    TEST_ASSERT_EQUAL(DISK_OK, disk_imd_open_begin(&img, mem_read, NULL, flen));
+    TEST_ASSERT_EQUAL(DISK_ERR_IO, disk_imd_open_step(&img, &done));
+}
+
 /* --- real discs (testdata/, never committed; missing data fails) -------------------------------- */
 
 static uint8_t *slurp(const char *name, uint32_t *len) {
@@ -335,6 +418,9 @@ int main(void) {
     RUN_TEST(test_imd_fm_16x128_gap_3_shrinks_to_fit);
     RUN_TEST(test_imd_maps_fm_and_size_table);
     RUN_TEST(test_imd_rejects_bad_files);
+    RUN_TEST(test_imd_open_in_steps_indexes_one_track_record_a_step);
+    RUN_TEST(test_imd_open_step_after_done_stays_done);
+    RUN_TEST(test_imd_open_step_finds_the_errors_open_finds);
     RUN_TEST(test_real_dragon_world_imd_and_hfe_load_the_same);
     RUN_TEST(test_real_flowers_of_crystal_imd_and_hfe_load_the_same);
     RUN_TEST(test_real_rebuilt_imd_has_both_sector_08s_and_find_picks_by_rotation);

@@ -18,6 +18,7 @@
 section 4, "MAME in the loop").
 
 usage: run_mame_linked.py SCENARIO.scn ... [--port LINK_PORT] [--console CONSOLE_PORT] [--out DIR] [--keep-card]
+                         [--use-menu]
        run_mame_linked.py --restore      (put the card's discs back as the original, after --keep-card or a failure)
 
 Each scenario (tests/mame/scenarios/) runs in MAME's rm480z at real speed, windowless, with the rmfe_link device
@@ -29,6 +30,9 @@ with those discs can run; the others are refused.
 For each scenario it:
   - restarts the Pico through the OpenOCD server, if one is running (else uses it as it is);
   - runs the scenario, logging the link from the 480Z's side (MAME's emulated time) and the bridge's turnaround;
+  - with --use-menu, works the menu through the console all the while (src/pico/panel.h: lists both drives'
+    folders, scrolls, goes home, redraws the whole screen; never changes a disc), so the scenario shows the menu
+    doesn't hold up the link; then prints the firmware's report (STATS: peak stacks, the longest menu step);
   - checks MAME kept real speed and the link was idle for the last second;
   - compares the bytes the 480Z sent and received with the MAME reference trace (testdata/traces/<name>.trace),
     reporting each difference. These are not failures: the 480Z may take another path if, say, the drive type
@@ -46,6 +50,7 @@ Environment: RMFE_MAME (the rm480z build with the rmfe_link patch), RMFE_MAME_RO
 background-docs/mame-romsets), RMFE_TESTDATA (default testdata/), RMFE_LINK_PORT, RMFE_CONSOLE_PORT.
 """
 import argparse
+import concurrent.futures
 import os
 import pathlib
 import re
@@ -53,6 +58,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import threading
 import time
 
 import serial
@@ -153,6 +159,40 @@ def restart_pico(server, console, far):
     return report
 
 
+MENU_KEYS = "p+++---l" "+p----++l-" "r"  # drive A's list, B's list, a full redraw (src/pico/panel.h)
+MENU_KEY_GAP = 0.1  # seconds
+
+
+def use_menu(console, stop):
+    """Works the menu through the console until stop is set; returns how many keys were sent and what the console
+    said meanwhile (read as it goes, so the serial buffer never fills)."""
+    sent, heard = 0, []
+    while not stop.is_set():
+        for k in MENU_KEYS:
+            if stop.is_set():
+                break
+            console.write(k.encode())
+            sent += 1
+            time.sleep(MENU_KEY_GAP)
+            heard.append(console.read(console.in_waiting).decode(errors="replace"))
+    console.write(b"l")  # home, whatever state it was left in
+    time.sleep(0.5)
+    heard.append(console.read(console.in_waiting).decode(errors="replace"))
+    return sent, "".join(heard)
+
+
+def menu_report(console):
+    """The firmware's STATS line, and the menu's requests and answers seen on the console."""
+    console.reset_input_buffer()
+    console.write(b"s")
+    end = time.monotonic() + 2
+    while time.monotonic() < end:
+        line = console.readline().decode(errors="replace").strip()
+        if line.startswith("STATS:"):
+            return line
+    return "no STATS line"
+
+
 def run_scenario(s, args, mame, roms, testdata, server, console):
     print(f"== {s.name}")
     if s.drives.get("A") != SYSTEM_DISC or s.drives.get("B", SYSTEM_DISC) != SYSTEM_DISC or s.readonly or s.drops:
@@ -184,7 +224,21 @@ def run_scenario(s, args, mame, roms, testdata, server, console):
            "-autoboot_script", str(ROOT / "tools" / "mame" / "mq2trace.lua"), "-video", "none", "-sound", "none",
            "-seconds_to_run", f"{s.seconds:g}", "-skip_gameinfo"]  # no -nothrottle: real speed
     t0 = time.monotonic()
-    r = subprocess.run(cmd, cwd=out, env=env, capture_output=True, text=True, timeout=s.seconds * 3 + 60)
+    stop, menu = threading.Event(), None
+    if args.use_menu:
+        console.reset_input_buffer()
+        menu = concurrent.futures.ThreadPoolExecutor(1).submit(use_menu, console, stop)
+    try:
+        r = subprocess.run(cmd, cwd=out, env=env, capture_output=True, text=True, timeout=s.seconds * 3 + 60)
+    finally:
+        stop.set()
+    if menu:
+        sent, heard = menu.result()
+        lists = heard.count("UI: list"), heard.count("UI: done ok")
+        print(f"   menu: {sent} keys sent; {lists[0]} folder lists asked for, {lists[1]} answered")
+        if lists[0] == 0 or lists[1] < lists[0] - 1:  # the last may still be on its way
+            problems.append(f"the menu didn't work while the scenario ran ({lists[0]} lists, {lists[1]} answered)")
+        print(f"   {menu_report(console)}")
     (out / "mame.out").write_text(r.stdout + r.stderr)
     bridge_out = bridge.communicate(timeout=30)[0]
     (out / "bridge.out").write_text(first + bridge_out)
@@ -324,6 +378,7 @@ def main():
     ap.add_argument("--out", type=pathlib.Path, help="where to put the logs (default RMFE_TESTDATA/linked)")
     ap.add_argument("--keep-card", action="store_true", help="leave the discs as the scenario left them")
     ap.add_argument("--restore", action="store_true", help="only put the card's discs back as the original")
+    ap.add_argument("--use-menu", action="store_true", help="work the menu through the console during each scenario")
     args = ap.parse_args()
 
     roms = pathlib.Path(os.environ.get("RMFE_MAME_ROMS", ROOT / "background-docs" / "mame-romsets"))
@@ -353,6 +408,8 @@ def main():
     except OSError:
         server = console = None
         print("no OpenOCD server: the Pico isn't restarted between scenarios")
+        if args.use_menu:
+            sys.exit("--use-menu needs the probe's console (and an OpenOCD server)")
 
     results = {}
     for path in args.scenarios:

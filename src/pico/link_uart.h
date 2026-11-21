@@ -53,4 +53,9 @@ void link_uart_init(void);
 /* The link_io_t for core/link.h and core/idc.h. Its recv() and send() wait as long as they need to. */
 const link_io_t *link_uart_io(void);
 
+/* fn is called over and over while recv() waits for a byte and none has come, with the 480Z's CTS asserted.
+ * NULL: nothing. It must return quickly: a byte arriving meanwhile waits in the FIFO until it does. The firmware
+ * uses it to do the menu's work on the SD card between commands (src/pico/main.c). Core 0 only. */
+void link_uart_set_idle(void (*fn)(void));
+
 #endif
