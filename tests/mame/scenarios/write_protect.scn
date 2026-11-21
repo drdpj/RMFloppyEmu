@@ -1,0 +1,10 @@
+# Errors: drive B's disc is write-protected. DIR B: reads it; SAVE to it fails; Return goes back to A>.
+drive A 480Z_RML_system-cpm2.2f-basic5.3g-basic6.3b.imd
+drive B 480Z_RML_system-cpm2.2f-basic5.3g-basic6.3b.imd
+readonly B
+seconds 36
+type 2.0 B
+type 12 DIR B:\r
+type 18 SAVE 1 B:X.COM\r
+type 26 \r
+type 30 DIR\r

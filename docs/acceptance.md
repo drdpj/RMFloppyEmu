@@ -1,0 +1,49 @@
+# 480Z acceptance checklist (level 4)
+
+Run this by hand on a real 480Z before a release, and record the result at the bottom. Use **copies** of disk images.
+A failed item blocks the release until it is fixed, or the owner explicitly accepts it and records it here.
+
+## Setup
+
+- [ ] Firmware git hash and IDC ROM revision (IDC3 or IDC5) recorded
+- [ ] 480Z ROS version (sign-on message) recorded
+- [ ] Device connected to the SIO/4 port with the production cable; the real MD1 disconnected
+- [ ] SD card set up as `docs/sd-card.md` says: its `RMFE.CFG`, the images in A and B, and the IDC ROM recorded
+
+## Boot and basic operation
+
+- [ ] Power-on order: device first, then 480Z. `B` boots CP/M to `A>`
+- [ ] Power-on order: 480Z first, then device. `B` boots CP/M to `A>`
+- [ ] `X` (boot from another drive) boots from drive B
+- [ ] `DIR` on A: and B: lists the expected files
+- [ ] `TYPE` a text file of more than 16 KB (several extents); the contents are correct
+
+## Writing
+
+- [ ] `PIP` a file from A: to B:, then compare the copy with the original using a checksum utility
+- [ ] `ERA` a file; the directory updates, and the space is reused by the next write
+- [ ] Fill a disk until "disk full"; the image is still consistent afterwards
+- [ ] Power off the device during a write. On restart the image is either unchanged or holds the new data (never a
+      half-written sector), or the failure mode is documented
+- [ ] Changes survive a device power cycle, and the image read back on a PC matches
+- [ ] An image with the FAT read-only attribute (or `write-protect = yes`) gives the 480Z a write-protect error,
+      and is unchanged afterwards
+
+## Formats and media
+
+- [ ] Every disk format we support boots or reads (SD, DD, QD; single and double sided), one image of each
+- [ ] RM's FORMAT and VERIFY on an IMD and on an HFE in drive B; the formatted image reads back on a PC
+- [ ] Changing disk images while the 480Z is at `A>` behaves as a disk change does (`^C` logs in the new disk)
+- [ ] No image in a drive gives the same error on the 480Z as an empty real drive
+
+## Robustness
+
+- [ ] 480Z reset in the middle of a transfer: the next command works, with no device reset needed
+- [ ] A long session (copy a whole disk three times) completes without errors or retries
+- [ ] Software that talks to the drive directly (list any found, for example FORMAT and disk utilities) works
+
+## Results
+
+| Date | Firmware | IDC ROM | ROS | Tester | Result / notes |
+|---|---|---|---|---|---|
+| | | | | | |

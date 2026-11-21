@@ -1,0 +1,10 @@
+# RM's COPYFILE 4.0C copies A:STAT.COM to B:X.COM (02, 04, 08 on two drives). "File copy completed".
+drive A 480Z_RML_system-cpm2.2f-basic5.3g-basic6.3b.imd
+drive B 480Z_RML_system-cpm2.2f-basic5.3g-basic6.3b.imd
+seconds 56
+type 2.0 B
+type 12 COPYFILE\r
+type 18 \r
+type 21 A:STAT.COM\r
+type 28 B:X.COM\r
+type 35 \r

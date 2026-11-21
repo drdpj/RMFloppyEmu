@@ -1,0 +1,14 @@
+# RM's FORMAT 4.0E formats drive B double-sided, double density (over a copy of the system disc): 06, then
+# 0C and 0D for every track and side, and 0F for each side's cylinder 0 sector 01. "Format completed".
+drive A 480Z_RML_system-cpm2.2f-basic5.3g-basic6.3b.imd
+drive B 480Z_RML_system-cpm2.2f-basic5.3g-basic6.3b.imd
+seconds 96
+type 2.0 B
+type 12 FORMAT\r
+type 18 \r
+type 21 B
+type 24 Y
+type 27 N
+type 30 Y
+type 33 \r
+type 37 Y

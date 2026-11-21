@@ -1,0 +1,10 @@
+# Errors: SAVE writes to a sector that isn't on the disc (sector 4 of cylinder 33 side 0 removed from the copy).
+# The IDC takes three records of it, then answers 10 to the fourth, which sends the sector to the disc.
+# CP/M reports "Bad Sector"; Return carries on, then DIR.
+drive A 480Z_RML_system-cpm2.2f-basic5.3g-basic6.3b.imd
+drop A 33 0 4
+seconds 70
+type 2.0 B
+type 12 SAVE 2 S.COM\r
+type 32 \r
+type 50 DIR\r

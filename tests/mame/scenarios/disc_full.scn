@@ -1,0 +1,7 @@
+# Writes until the disc is full: PIP copies a 217-record file onto a disc without room for it, and
+# CP/M reports DISK WRITE ERROR.
+drive A 480Z_RML_system-cpm2.2f-basic5.3g-basic6.3b.imd
+seconds 70
+type 2.0 B
+type 12 PIP T.COM=BASIC.COM\r
+type 60 DIR\r

@@ -1,0 +1,13 @@
+# RM's FASTCOPY 4.0E copies disc A to disc B, both sides, reformatting B as it goes: 06, 0E/0F for the FM
+# track 0, then per cylinder 0C and 03 (write without verify) for every record, 08 after each side.
+drive A 480Z_RML_system-cpm2.2f-basic5.3g-basic6.3b.imd
+drive B 480Z_RML_system-cpm2.2f-basic5.3g-basic6.3b.imd
+seconds 480
+type 2.0 B
+type 12 FASTCOPY\r
+type 18 \r
+type 21 A
+type 24 B
+type 27 Y
+type 30 \r
+type 40 Y

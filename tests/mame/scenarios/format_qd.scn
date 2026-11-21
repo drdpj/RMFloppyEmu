@@ -1,0 +1,18 @@
+# RM's FORMAT 4.0E formats drive B double-sided in quad density (80 tracks a side), over a copy of the
+# double-density system disc: 06, then 0C and 0D for every track and side (drive byte 41/43), 0F for each
+# side's cylinder 0 sector 01. "Format completed".
+drive A 480Z_RML_system-cpm2.2f-basic5.3g-basic6.3b.imd
+drive B 480Z_RML_system-cpm2.2f-basic5.3g-basic6.3b.imd
+seconds 160
+type 2.0 B
+type 12 FORMAT\r
+type 18 \r
+type 21 B
+type 24 Y
+type 27 Y
+type 30 \r
+type 34 Y
+# The IDC's DD->QD seek bug writes MAME's cylinder 0 side 0 to physical track 2, leaving the old disc's
+# sectors there; we format the track asked for (docs/protocol.md, "Switching a drive from double to quad
+# density"; owner's decision, 2026-11-21).
+differs B 0 0 02-10 IDC seek bug after DD->QD: MAME keeps the old data, we format the track (docs/protocol.md)

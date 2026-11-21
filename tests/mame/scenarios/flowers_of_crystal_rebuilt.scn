@@ -1,0 +1,6 @@
+# 4MATION's Flowers of Crystal loader boots from 480Z_4MATION_Flowers_of_Crystal_1985_rebuilt.IMD: it reads cylinder 2 sector 08 with 0E until it meets
+# the copy its check wants (two sectors 08 on the track, found by where the disc is: docs/protocol.md,
+# "Copy-protected discs"), then verifies cylinder 3 with 0D.
+drive A 480Z_4MATION_Flowers_of_Crystal_1985_rebuilt.IMD
+seconds 60
+type 2.0 B
