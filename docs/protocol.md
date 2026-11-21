@@ -17,7 +17,7 @@ Anything without a tag is inference and should be confirmed.
 | Item | Detail |
 |---|---|
 | CPU | Z80 @ 4 MHz (8 MHz crystal ÷ 2) [MAME] |
-| ROM | 8 KB at 0000–1FFF: `IDC3-1I.ROM` (CRC 39e2cdf0, the one MAME uses) or `IDC5-1J.ROM` (CRC d2ac27e2, a later revision) |
+| ROM | 8 KB at 0000–1FFF: `IDC3-1I.ROM` (IDC 3.1, CRC 39e2cdf0: the double-drive units' ROM, and the one MAME's MQ2 uses) or `IDC5-1J.ROM` (IDC 5.1, CRC d2ac27e2: the single-drive units', owner 2026-11-21) |
 | RAM | 2 KB at E000, mirrored up to FFFF; the firmware addresses it as FExx/FFxx [MAME] |
 | SIO | Z80 SIO, ports E4–E7: E4/E5 = channel A data/control, E6/E7 = channel B data/control. **Channel B is the 480Z link.** [IDC3 0a1f, 0a56] |
 | CTC | Ports E0–E3. Channel 0 is clocked at 2 MHz and generates the channel B baud clock [MAME, IDC3 0116] |

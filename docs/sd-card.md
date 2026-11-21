@@ -10,7 +10,7 @@ same option. There's only one system to serve, so there are far fewer options. N
 | File | What it is |
 |---|---|
 | `*.IMD`, `*.HFE` | disc images, in the root or in folders |
-| `IDC.ROM` | your IDC ROM (8 KB): the boot block the 480Z loads comes from it. Another name can be set with `idc-rom` |
+| `IDC.ROM` | your IDC ROM (8 KB): the boot block the 480Z loads comes from it. Use IDC 3.1, the double-drive units' ROM (5.1, the single-drive units', also works). Another name can be set with `idc-rom` |
 | `RMFE.CFG` | settings (optional) |
 | `IMAGE_A.CFG`, `IMAGE_B.CFG` | the image last chosen for each drive (optional) |
 | `INIT_A.CFG`, `INIT_B.CFG` | a fixed image for each drive, for `image-on-startup = static` (optional) |

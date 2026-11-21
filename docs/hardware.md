@@ -17,7 +17,8 @@ as wired below, is B changing before A.
   HFE has the written track re-encoded in place, which needs a C FM/MFM encoder in `src/flux` (useful to Disk
   Wrangler too).
 - **The IDC ROM lives on the SD card too** (owner, 2026-11-20): an 8 KB image, `IDC.ROM` in the card's root (or the
-  first `*.ROM` that `idc_find_boot_block()` recognises, so IDC3 and IDC5 both work). It is read into RAM at start-up,
+  first `*.ROM` that `idc_find_boot_block()` recognises, so IDC3 and IDC5 both work). Use IDC 3.1 (`IDC3-1I`), the
+  double-drive units' ROM (owner, 2026-11-21); 5.1 (`IDC5-1J`) was the single-drive units'. It is read into RAM at start-up,
   and command `FF` sends the boot block from it. With no recognised ROM, the screen says so and `FF` is answered as
   unknown. This keeps RM's code off the device firmware and out of the repository.
 - **Display:** a 2.8" SPI TFT, 240×320, "V1.2" (the board lcdwiki calls MSP2807). The controller isn't marked on
@@ -40,7 +41,7 @@ as wired below, is B changing before A.
 | 2.8" SPI TFT 240×320 V1.2 (ILI9341, probably) | the display. Its SD slot and touch controller aren't used |
 | micro-SD breakout (SPI) | the SD card, on SPI0 |
 | Rotary encoder with push switch (EC11 type) | A/B/switch to ground (common `C` and one switch pin to GND), internal pull-ups on the Pico |
-| **MAX3243 / SP3243** RS-232 transceiver (3 drivers, 5 receivers, 3.0–5.5 V) + 4 × 0.1 µF | or two MAX3232s (2 + 2 each). All 3.3 V parts: no ±12 V supply needed |
+| Two **MAX3232** RS-232 modules (2 drivers + 2 receivers each), powered at 3.3 V | the link's 3 drivers and 3 receivers (wiring below). A MAX3243 (3 + 5, plus 4 × 0.1 µF) does it in one chip. No ±12 V supply needed |
 | Plug for the 480Z's SIO/4 DIN socket | or reuse an MD1 cable |
 | micro-SD card, FAT32 or exFAT | images in the root or in folders (`docs/sd-card.md`). exFAT because cards over 32 GB come formatted that way |
 
