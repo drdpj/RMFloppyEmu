@@ -1,0 +1,10 @@
+# A PIP copy to the other drive: A:STAT.COM to B:T.COM (02 on drive A, 04 and 08 on drive B), then DIR B: and
+# STAT B:T.COM read it back.
+drive A 480Z_RML_system-cpm2.2f-basic5.3g-basic6.3b.imd
+drive B 480Z_RML_system-cpm2.2f-basic5.3g-basic6.3b.imd
+seconds 76
+type 2.0 B
+type 12 PIP B:T.COM=STAT.COM\r
+type 50 DIR B:\r
+type 60 STAT B:T.COM\r
+snap 49 59 72

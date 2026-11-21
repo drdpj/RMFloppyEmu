@@ -1,0 +1,371 @@
+diff --git a/src/mame/rm/rm480z.cpp b/src/mame/rm/rm480z.cpp
+index 4637ea65..66356f7c 100644
+--- a/src/mame/rm/rm480z.cpp
++++ b/src/mame/rm/rm480z.cpp
+@@ -112,6 +112,7 @@ TODO:
+ #include "emu.h"
+ #include "rm480z.h"
+ #include "rm_mq2.h"
++#include "rmfe_link.h"
+ #include "machine/clock.h"
+ #include "speaker.h"
+ #include "screen.h"
+@@ -276,6 +277,7 @@ uint32_t rm480z_state::screen_update_rm480z(screen_device &screen, bitmap_ind16
+ static void rm480z_default_rs232_devices(device_slot_interface &device)
+ {
+ 	device.option_add("rm_mq2", RM_MQ2);
++	device.option_add("rmfe_link", RMFE_LINK);
+ }
+ 
+ static const z80_daisy_config daisy_chain[] =
+diff --git a/src/mame/rm/rmfe_link.cpp b/src/mame/rm/rmfe_link.cpp
+new file mode 100644
+index 00000000..18358691
+--- /dev/null
++++ b/src/mame/rm/rmfe_link.cpp
+@@ -0,0 +1,263 @@
++// license:GPL-2.0+
++// copyright-holders:Daniel Jameson
++/*
++    RMFloppyEmu link: the 480Z's disc-unit port relayed over a socket
++
++    Copyright (C) 2026 Daniel Jameson
++
++    This program is free software; you can redistribute it and/or modify it under the terms of the GNU General
++    Public License as published by the Free Software Foundation; either version 2 of the License, or (at your
++    option) any later version.
++
++    This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the
++    implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License
++    for more details.
++
++    You should have received a copy of the GNU General Public License along with this program; if not, see
++    <https://www.gnu.org/licenses/>.
++
++    Puts a real disc unit (RMFloppyEmu's Pico, through a USB serial adapter) on the 480Z's SIO/4 port in place
++    of rm_mq2. The bytes and all four handshake lines go over the bitbanger's socket to a bridge program
++    (RMFloppyEmu's tools/mame/link_bridge.py), which drives the adapter.
++
++        mame rm480z -rs232 rmfe_link -bitb socket.127.0.0.1:4480 ...
++
++    Messages are two bytes, a type and a value:
++
++        MAME -> bridge   'T' b   a byte the 480Z sent (8E1)
++                         'H' l   the 480Z's lines: bit 0 RTS asserted, bit 1 DTR asserted
++                         'B' f   the link's rate from now on: 0 = 9600, 1 = 125000
++        bridge -> MAME   'R' b   a byte the unit sent
++                         'H' l   the unit's lines as the 480Z sees them: bit 0 CTS asserted, bit 1 DCD asserted
++
++    The link changes rate by agreement, not by a signal, so this device follows the IDC's rule: it is back at
++    9600 when the 480Z asserts RTS (the unit's NMI), and at 125000 once it has relayed the unit's 5A 00 01 in
++    answer to a 00 sent at 9600. The 480Z sets its own SIO's clock; this device only has to serialise at the
++    same rate. It also does the transmit half of the IDC's auto enables, sending to the 480Z only while the
++    480Z's DTR is asserted (start_next()), because the unit learns of DTR too late through USB.
++
++    RMFE_LINK_DTR_SLACK=n (default 0) lets n more bytes start after the 480Z drops DTR than the IDC would, to
++    test what the 480Z tolerates.
++
++    If RMFE_LINK_LOG names a file, every event is logged there with MAME's emulated time, named from the unit's
++    side as in RMFloppyEmu's mq2trace.lua: RX a byte from the 480Z (complete), TX a byte to it (starting), then
++    RTS, DTR (the 480Z's lines), CTS, DCD (the unit's, as the 480Z sees them; 1 = asserted) and BAUD (1 = 125000).
++*/
++
++#include "emu.h"
++#include "rmfe_link.h"
++
++#include <cstdlib>
++
++namespace {
++
++constexpr int RATE_SLOW = 9600;
++constexpr int RATE_FAST = 125000;
++constexpr uint8_t GO_FAST_REPLY[] = { 0x5a, 0x00, 0x01 };
++
++} // anonymous namespace
++
++rmfe_link_device::rmfe_link_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock) :
++	device_t(mconfig, RMFE_LINK, tag, owner, clock),
++	device_serial_interface(mconfig, *this),
++	device_rs232_port_interface(mconfig, *this),
++	m_stream(*this, "stream"),
++	m_poll_timer(nullptr),
++	m_msg_len(0),
++	m_rts(1),
++	m_dtr(1),
++	m_fast(false),
++	m_go_fast_asked(false),
++	m_go_fast_matched(0),
++	m_switch_after_tx(false),
++	m_slack(0),
++	m_slack_used(0),
++	m_log(nullptr)
++{
++}
++
++rmfe_link_device::~rmfe_link_device()
++{
++	if (m_log)
++		std::fclose(m_log);
++}
++
++void rmfe_link_device::device_add_mconfig(machine_config &config)
++{
++	BITBANGER(config, m_stream);
++}
++
++void rmfe_link_device::device_start()
++{
++	m_poll_timer = timer_alloc(FUNC(rmfe_link_device::poll), this);
++	const char *path = std::getenv("RMFE_LINK_LOG");
++	if (path && *path)
++		m_log = std::fopen(path, "w");
++	const char *slack = std::getenv("RMFE_LINK_DTR_SLACK");
++	m_slack = slack ? std::atoi(slack) : 0;
++
++	save_item(NAME(m_rts));
++	save_item(NAME(m_dtr));
++	save_item(NAME(m_fast));
++}
++
++void rmfe_link_device::device_reset()
++{
++	set_data_frame(1, 8, PARITY_EVEN, STOP_BITS_1);
++	m_to_480z.clear();
++	m_msg_len = 0;
++	m_go_fast_asked = false;
++	m_go_fast_matched = 0;
++	m_switch_after_tx = false;
++	m_fast = true; // so that set_fast() sends 'B'
++	set_fast(false);
++	output_rxd(1);
++	output_cts(1); // deasserted until the bridge reports the unit's lines
++	output_dcd(1);
++	output_dsr(1);
++	send_lines();
++	m_poll_timer->adjust(attotime::from_usec(20), 0, attotime::from_usec(20));
++}
++
++void rmfe_link_device::log(const char *what, int value)
++{
++	if (m_log)
++		std::fprintf(m_log, "%11.6f %s %02X\n", machine().time().as_double(), what, value);
++}
++
++void rmfe_link_device::send_msg(uint8_t type, uint8_t value)
++{
++	m_stream->output(type);
++	m_stream->output(value);
++}
++
++void rmfe_link_device::send_lines()
++{
++	const uint8_t lines = (m_rts ? 0 : 1) | (m_dtr ? 0 : 2);
++	send_msg('H', lines);
++}
++
++void rmfe_link_device::set_fast(bool fast)
++{
++	if (fast == m_fast)
++		return;
++	m_fast = fast;
++	set_rate(fast ? RATE_FAST : RATE_SLOW);
++	send_msg('B', fast ? 1 : 0);
++	log("BAUD", fast ? 1 : 0);
++}
++
++void rmfe_link_device::input_rts(int state)
++{
++	if (state == m_rts)
++		return;
++	m_rts = state;
++	log("RTS", state ? 0 : 1);
++	send_lines();
++	if (!state) {
++		// The unit's NMI: it drops whatever it was doing and is back at 9600 [IDC3 0066]
++		m_go_fast_asked = false;
++		m_go_fast_matched = 0;
++		m_switch_after_tx = false;
++		set_fast(false);
++	}
++}
++
++void rmfe_link_device::input_dtr(int state)
++{
++	if (state == m_dtr)
++		return;
++	m_dtr = state;
++	m_slack_used = 0;
++	log("DTR", state ? 0 : 1);
++	send_lines();
++	start_next();
++}
++
++void rmfe_link_device::rcv_complete()
++{
++	receive_register_extract();
++	const uint8_t data = get_received_char();
++	log(is_receive_parity_error() ? "RX!" : "RX", data);
++	if (!m_fast) {
++		m_go_fast_asked = data == 0x00;
++		m_go_fast_matched = 0;
++	}
++	send_msg('T', data);
++}
++
++void rmfe_link_device::start_next()
++{
++	// The IDC's SIO has auto enables on: it starts a character only while its CTS, the 480Z's DTR, is asserted
++	// [IDC3 0123-012c]. The 480Z's ROS uses that to pace the unit, dropping DTR every few bytes, and its SIO's
++	// 3-byte FIFO overruns if the unit carries on. The real unit sees DTR through the adapter a millisecond or more
++	// late (USB), about 11 bytes at 125000, so the gating is done here, where the 480Z's DTR is seen at once.
++	if (m_to_480z.empty() || !is_transmit_register_empty())
++		return;
++	if (m_dtr) {
++		// RMFE_LINK_DTR_SLACK: an experiment, letting that many more bytes start after DTR drops, to see what the
++		// 480Z tolerates from a unit slower to stop than the IDC
++		if (m_slack_used >= m_slack)
++			return;
++		m_slack_used++;
++	}
++	const uint8_t data = m_to_480z.front();
++	m_to_480z.pop_front();
++	log("TX", data);
++	if (m_go_fast_asked && !m_fast) {
++		if (data == GO_FAST_REPLY[m_go_fast_matched]) {
++			if (++m_go_fast_matched == int(sizeof(GO_FAST_REPLY))) {
++				m_switch_after_tx = true;
++				m_go_fast_asked = false;
++				m_go_fast_matched = 0;
++			}
++		} else {
++			m_go_fast_asked = false;
++			m_go_fast_matched = 0;
++		}
++	}
++	transmit_register_setup(data);
++}
++
++void rmfe_link_device::tra_callback()
++{
++	output_rxd(transmit_register_get_data_bit());
++}
++
++void rmfe_link_device::tra_complete()
++{
++	if (m_switch_after_tx) {
++		m_switch_after_tx = false;
++		set_fast(true);
++	}
++	start_next();
++}
++
++TIMER_CALLBACK_MEMBER(rmfe_link_device::poll)
++{
++	uint8_t buf[256];
++	const uint32_t n = m_stream->input(buf, sizeof(buf));
++	for (uint32_t i = 0; i < n; i++) {
++		m_msg[m_msg_len++] = buf[i];
++		if (m_msg_len < 2)
++			continue;
++		m_msg_len = 0;
++		switch (m_msg[0]) {
++		case 'R':
++			m_to_480z.push_back(m_msg[1]);
++			break;
++		case 'H':
++			log("CTS", m_msg[1] & 1);
++			log("DCD", (m_msg[1] >> 1) & 1);
++			output_cts((m_msg[1] & 1) ? 0 : 1);
++			output_dcd((m_msg[1] & 2) ? 0 : 1);
++			break;
++		default:
++			logerror("rmfe_link: unknown message %02x %02x\n", m_msg[0], m_msg[1]);
++			break;
++		}
++	}
++	start_next();
++}
++
++DEFINE_DEVICE_TYPE(RMFE_LINK, rmfe_link_device, "rmfe_link", "RMFloppyEmu link (socket to a real disc unit)")
+diff --git a/src/mame/rm/rmfe_link.h b/src/mame/rm/rmfe_link.h
+new file mode 100644
+index 00000000..c74f5569
+--- /dev/null
++++ b/src/mame/rm/rmfe_link.h
+@@ -0,0 +1,76 @@
++// license:GPL-2.0+
++// copyright-holders:Daniel Jameson
++/*
++    RMFloppyEmu link: the 480Z's disc-unit port relayed over a socket
++
++    Copyright (C) 2026 Daniel Jameson
++
++    This program is free software; you can redistribute it and/or modify it under the terms of the GNU General
++    Public License as published by the Free Software Foundation; either version 2 of the License, or (at your
++    option) any later version.
++
++    This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the
++    implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License
++    for more details.
++
++    You should have received a copy of the GNU General Public License along with this program; if not, see
++    <https://www.gnu.org/licenses/>.
++*/
++#ifndef MAME_RM_RMFE_LINK_H
++#define MAME_RM_RMFE_LINK_H
++
++#pragma once
++
++#include "bus/rs232/rs232.h"
++#include "diserial.h"
++#include "imagedev/bitbngr.h"
++
++#include <cstdio>
++#include <deque>
++
++class rmfe_link_device : public device_t, public device_serial_interface, public device_rs232_port_interface
++{
++public:
++	rmfe_link_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock);
++	~rmfe_link_device();
++
++	virtual void input_txd(int state) override { device_serial_interface::rx_w(state); }
++	virtual void input_rts(int state) override;
++	virtual void input_dtr(int state) override;
++
++protected:
++	virtual void device_start() override ATTR_COLD;
++	virtual void device_reset() override ATTR_COLD;
++	virtual void device_add_mconfig(machine_config &config) override ATTR_COLD;
++
++	virtual void tra_callback() override;
++	virtual void tra_complete() override;
++	virtual void rcv_complete() override;
++
++private:
++	TIMER_CALLBACK_MEMBER(poll);
++	void send_msg(uint8_t type, uint8_t value);
++	void send_lines();
++	void set_fast(bool fast);
++	void start_next();
++	void log(const char *what, int value);
++
++	required_device<bitbanger_device> m_stream;
++	emu_timer *m_poll_timer;
++	std::deque<uint8_t> m_to_480z;
++	uint8_t m_msg[2];
++	int m_msg_len;
++	int m_rts; // the 480Z's RTS and DTR, as pin levels (0 = asserted)
++	int m_dtr;
++	bool m_fast;
++	bool m_go_fast_asked; // the 480Z sent 00 at 9600
++	int m_go_fast_matched; // how much of 5A 00 01 has been relayed since
++	bool m_switch_after_tx;
++	int m_slack; // bytes that may still start after the 480Z drops DTR (RMFE_LINK_DTR_SLACK; 0 = as the IDC)
++	int m_slack_used;
++	FILE *m_log;
++};
++
++DECLARE_DEVICE_TYPE(RMFE_LINK, rmfe_link_device)
++
++#endif // MAME_RM_RMFE_LINK_H

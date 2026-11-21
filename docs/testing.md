@@ -113,6 +113,7 @@ timeout 300 ctest --test-dir build-tests -L mame --output-on-failure
   | `boot` | CP/M 2.2F boots to `A>`: `00`, `FF`, `05`, `01`, `02`, `06`, `08` |
   | `read` | `DIR`, `TYPE` of a 27-record file, `STAT` |
   | `write` | `SAVE`, a 41-record `PIP` copy, `ERA`, `DIR`: `04` and `08`, and the disc afterwards |
+  | `pip_b` | a `PIP` copy from A: to B:, then `DIR B:` and `STAT B:T.COM`: two drives, and drive B's disc afterwards |
   | `disc_full` | a `PIP` copy that fills the disc (223 writes, then CP/M's DISK WRITE ERROR) |
   | `no_disc` | `DIR B:` with drive B empty: `80` |
   | `write_protect` | `SAVE` to a write-protected disc: `08` answers `41` |
@@ -224,6 +225,41 @@ The record written to B comes from a random seed, printed with the results (`--s
 Both scripts print the git hash with the results, and `--log` keeps them. The timings include USB: a record takes 12–23 ms
 from command to last byte, against 11.9 ms on the wire. The 480Z's own timeouts are still an open question
 (`docs/protocol.md`).
+
+### MAME in the loop
+
+MAME's emulated 480Z, running the real ROS, CP/M and RM's utilities, in place of the adapter's script: the device
+firmware with its card, as for `run_hil_sd.py`, plays the disc unit instead of MAME's `rm_mq2`.
+
+```
+cd $RMFE_MAME_SRC && git apply $REPO/tools/mame/rmfe_link.patch     # once; MAME's tree, then rebuild rm480z
+RMFE_MAME=.../rm480z timeout 3000 tests/hil/run_mame_linked.py tests/mame/scenarios/{boot,read,pip_b,write,verify,format}.scn
+tests/hil/run_mame_linked.py --restore                              # put the card back after --keep-card or a failure
+```
+
+- `tools/mame/rmfe_link.patch` adds `rmfe_link`, an RS-232 slot device for the 480Z's disc port. It relays bytes
+  and all four handshake lines over a socket (MAME's bitbanger, `-bitb socket.HOST:PORT`), and serialises the
+  unit's bytes into the 480Z's SIO at 9600 or 125000, following the IDC's rule: back to 9600 when the 480Z asserts
+  RTS, 125000 once `5A 00 01` has been relayed for a `00`. It also does the transmit half of the IDC's auto
+  enables, sending to the 480Z only while its DTR is asserted: the 480Z paces the unit with DTR, and the real
+  unit only learns of a change a millisecond or so later through USB (`docs/protocol.md`, "Flow control").
+  `RMFE_LINK_LOG` logs the link with MAME's emulated time; `RMFE_LINK_DTR_SLACK=n` lets n more bytes through after
+  DTR drops, to test what the 480Z tolerates.
+- `tools/mame/link_bridge.py` connects that socket to the FT232R (low-latency mode), mirrors the 480Z's RTS and DTR
+  onto the adapter's, and polls the adapter's CTS and DCD back into MAME. It can be used on its own, with MAME
+  started by hand (with a window, to use the 480Z interactively).
+- `run_mame_linked.py` runs each scenario at real speed, windowless, and restarts the Pico first if an OpenOCD
+  server is running. It fails if MAME falls below 95% of real speed, if the link is still busy in the last
+  second, or if any record of either drive, read back through the link afterwards, differs from the disc MAME's
+  own unit left (`testdata/traces/<name>.<drive>.imd`; the original for a drive the scenario doesn't use). It
+  then puts every changed record back, paced by CTS as the 480Z sends, so the card stays set up. Only scenarios
+  whose discs are the card's (the system disc in A, a copy in B) can run; the others are refused.
+- It compares the bytes the 480Z sent and received with the MAME reference trace, and prints each difference, but
+  they aren't failures: with the card's drives 40-track (`drive-a = auto`), `06`'s format byte is `02`, not
+  MAME's `0A`, and CP/M then takes a slightly different path (an extra log-in and read after each warm boot).
+- It writes MAME's output, the screen snapshots, the link log and the bridge's log to `testdata/linked/<name>/`.
+- The turnaround the bridge adds is measured both ways: by the bridge (from writing the 480Z's byte to the
+  adapter to reading the first byte back) and by the 480Z, in MAME's time.
 
 ## 5. Test data
 

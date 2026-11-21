@@ -32,12 +32,15 @@
 --   SEL   drive select/side port (0E);  DEN  density port (0D)  (both logged only when they change)
 
 local machine = manager.machine
+-- With rmfe_link in the port instead of rm_mq2 (a real unit through link_bridge.py), there is no MQ2 to tap:
+-- the device logs the link itself (RMFE_LINK_LOG), and this script only types keys and takes snapshots.
 local cpu = machine.devices[":rs232:rm_mq2:maincpu"]
-local io = cpu.spaces["io"]
 
 local function now() return machine.time:as_double() end
 local function log(ev, v) print(string.format("%10.6f %s %02X", now(), ev, v)) end
 
+if cpu then
+local io = cpu.spaces["io"]
 local wnames = { [0xe6] = "TX", [0xe0] = "CTC0", [0x00] = "FDC", [0x01] = "TRK",
                  [0x02] = "SEC", [0x0e] = "SEL", [0x0d] = "DEN" }
 
@@ -61,6 +64,7 @@ mq2_taps = {
     if (off & 0xff) == 0xe6 then log("RX", data) end
   end),
 }
+end
 
 -- Key presses via ioport fields (this driver does not support natural keyboard input)
 local fields = {}

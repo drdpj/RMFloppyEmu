@@ -101,8 +101,21 @@ The approach is a C reimplementation of the disk unit's command set, with a stag
       for a change of layout (FM/MFM, sector count or order), and for the first write that grows a compressed
       sector. On the way, the platform's replacement writes were batched in 16 KB, and its reads cached 4 KB at a
       time (4.4 s down to 1 s). The SPI clock went from 12.5 to 15 MHz.
-  - **Next, step 4:** MAME's emulated 480Z (the real ROS, CP/M and RM's utilities) connected through the FT232R
-    to the real Pico and its card, in place of MAME's own disc unit. Then the display and encoder.
+  - Step 4, MAME's 480Z with the real unit: working (2026-11-21). MAME's emulated 480Z, running the real ROS,
+    CP/M and RM's utilities, talks through the FT232R to the Pico and its card instead of MAME's own disc unit
+    (`docs/testing.md` section 4, "MAME in the loop"). CP/M boots to `A>`, and `boot`, `read`, `write`, `pip_b`
+    (a new scenario, a PIP copy to drive B), `verify` and `format` all pass at real speed: every record of both
+    drives afterwards matches the disc MAME's own unit left. The link differs from MAME's only where the drive
+    type does (the card's drives are 40-track, MAME's 80).
+    - New: `tools/mame/rmfe_link.patch` (an RS-232 slot device for MAME that relays bytes and the four handshake
+      lines over a socket), `tools/mame/link_bridge.py` (socket to FT232R) and `tests/hil/run_mame_linked.py`.
+    - The bridge adds 0.6 ms median at 125000 (bridge's turnaround 0.55–0.64 ms against 0.18 ms of wire time;
+      90% under 1.2 ms), 3 ms at 9600. The 480Z, in MAME's time, sees replies 0.9 ms median and 5.8 ms at worst
+      after its byte, against 0.05 ms from `rm_mq2`. Its ROS waits about 145 ms, so this is well within it.
+    - Found: the 480Z paces the unit with DTR, and the unit must stop within about a byte. Through USB the Pico
+      learns too late, so the MAME device does the IDC's DTR gating itself (`docs/protocol.md`, "Flow control").
+      In MAME the 480Z tolerates two bytes beyond the IDC's; the Pico sends at most one.
+    - **Next:** the display and encoder.
 
 ## Decided (2026-11-20)
 

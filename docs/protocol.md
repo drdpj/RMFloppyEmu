@@ -72,6 +72,28 @@ receiver.
   set-up table is `18 18 14 47 15 EA 11 00 13 E1` [IDC3 0123–012c]. So the SIO transmits only while its CTS (the
   480Z's DTR) is asserted, and receives only while its DCD (the 480Z's RTS) is asserted (Z80 SIO manual, WR3 D5).
   WR5 `EA` also holds the IDC's RTS (the 480Z's DCD) asserted.
+- **What the 480Z does with its lines** [MAME, the 480Z's ROS and CP/M with the real unit through `rmfe_link`,
+  2026-11-21; `docs/testing.md` section 4, "MAME in the loop"]:
+  - **RTS** rests asserted. The reset is a deassert pulse of 10–11 us; the unit resets as it is asserted again
+    (the Pico on that edge; MAME's `rm_mq2` NMIs on the first edge). The ROS sends its `00` about 1.7 ms later.
+  - **DTR** paces the unit. During the boot block (`FF`), the ROS takes two bytes, then drops DTR for about 1.3 ms
+    (the IDC's own trace shows the same gaps); during records it stays up. The IDC's auto enables stop it
+    within the character it is sending. In MAME, the 480Z still boots if the unit sends up to two more bytes
+    after DTR drops, and fails with three: its SIO's 3-byte receive FIFO overruns and the ROS reports
+    "Disc Error". The Pico sends at most one more (the byte queued behind the one being shifted out,
+    `src/pico/link_uart.c`), so it has a byte in hand. A unit that sees DTR only a millisecond late (through
+    USB) sends about 11, and fails.
+  - **Timeouts:** the ROS gives up about 145 ms after the last byte it received (144 and 145 ms, in the boot
+    block and waiting for `FF`'s answer), pulses RTS and shows "Disc Error". Replies up to 186 ms later were
+    tolerated after `0C` (FORMAT), so the wait depends on the command. The real unit through USB answers in
+    0.9 ms median, 5.8 ms at worst (MAME's time), so there is a wide margin.
+  - Through the link the 480Z sent two bytes with bad parity: its first `00` after power-up and its first `FF`
+    after going fast, each the first byte after it reprograms its baud rate (it may be MAME's emulation; the
+    IDC takes a command byte whatever its parity, so either way it does no harm).
+- **The unit receives through the UART's 32-byte FIFO only** (`src/pico/link_uart.c`): its CTS is down while it
+  works on the card (writing a track back, loading one), and a sender that ignores CTS can overrun it. The 480Z
+  waits for CTS and for each answer, so it never does; a test script playing the 480Z must do the same
+  (`tests/hil/run_mame_linked.py`, `send_paced`).
 
 ## Command layer
 
@@ -474,9 +496,11 @@ Whether the 480Z ever sends with RTS down is an open question.
       drive byte, each side being a CP/M drive of its own (A:/C:, B:/D:; "The drive byte" above, from the user guide
       and the traces, 2026-11-21).
 - [ ] The structure of the boot block: `00 E0` looks like a load address of E000, followed by `95 00`.
-- [ ] The 480Z side (`FV20_*.ROM`): how it sequences RTS and CTS, and its timeouts. Does it ever send with its
-      RTS down (which the IDC's auto enables would ignore, and we don't)? Does it hold DTR up throughout (the IDC
-      sends only while it is)?
+- [ ] The 480Z side (`FV20_*.ROM`): how it sequences RTS and CTS, and its timeouts. Partly answered in MAME
+      (2026-11-21, "Flow control"): RTS rests asserted with a 10 us pulse as the reset, DTR paces the unit two
+      bytes at a time during the boot block, and the ROS gives up about 145 ms after the last byte. It never sent
+      with RTS down in any scenario. Still open: the timeouts from the ROM itself, for each command, and the
+      same on the real 480Z.
 - [ ] Which disk image formats (IMD, raw) and geometries we need: SD track 0, DD/QD data tracks, 40 or 80 tracks.
 - [x] A record written (`03`/`04`) to a sector that isn't on the disc (MAME, 2026-11-21): the IDC takes it into its
       buffer; the fourth record of the sector writes it and answers `10`. A part-written buffer fails on `08` with
@@ -496,6 +520,10 @@ MQ2_KEYS="2.0:b B" MQ2_SNAP=29 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
   -seconds_to_run 30 -skip_gameinfo > trace.txt
 tools/mame/summarise.py trace.txt          # add --hw for FDC/drive-select detail, --full for every byte
 ```
+
+With `rmfe_link` in the port instead (`-rs232 rmfe_link`, a real unit through `tools/mame/link_bridge.py`), there
+is no MQ2 to tap: the script only types keys and takes snapshots, and the device logs the link itself to
+`RMFE_LINK_LOG`, from the 480Z's side, with the same `RX`/`TX` names (`docs/testing.md` section 4).
 
 `tools/mame/keys.py` types shifted symbols (`=`, `*`, …) as `Shift+<key>`, which `mq2trace.lua` turns into Shift
 pressed 50 ms before the key (pressed together, the 480Z sees the unshifted key). `MQ2_SNAP` snapshots work
