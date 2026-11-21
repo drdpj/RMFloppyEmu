@@ -1,7 +1,8 @@
 # 480Z ↔ disk unit serial protocol
 
 Working notes on the link between the RML 480Z and its serial disk unit. The unit's controller is an "IDC" board; MAME
-calls the unit **MQ2**. Status: first pass, 2026-11-20.
+calls the unit **MQ2**. Status (2026-11-21): every command the 480Z's software has been seen to use is decoded and
+implemented, and matches MAME byte for byte; what is still open is at the end.
 
 Each fact is tagged with its source:
 
@@ -43,10 +44,10 @@ On the 480Z this is the **SIO/4 port**, Z80 SIO channel B, which uses true RS-23
 | 7 | DCD | in | ← RTS |
 | 8 | RxD | in | ← TxD |
 
-**For the Pico:** these are ±12 V RS-232 levels, so we need a transceiver such as the MAX3232 (2 drivers and 2
-receivers). We need all four handshake lines. We drive TxD, DTR(→CTS) and RTS(→DCD), and receive RxD, CTS(←DTR) and
-DCD(←RTS). That makes 3 out and 3 in, so it is either one MAX3238, or one MAX3232 plus a single extra driver and
-receiver.
+**For the Pico:** these are ±12 V RS-232 levels: the 480Z's 75188s would drive about ±12 V into the Pico's 3.3 V
+pins. So the unit needs transceivers of its own, as the MD1 had. All four handshake lines are used: the unit drives
+TxD, DTR(→CTS) and RTS(→DCD), and receives RxD, CTS(←DTR) and DCD(←RTS), 3 out and 3 in. That is two MAX3232
+modules powered at 3.3 V (or one MAX3243); the wiring is in `docs/hardware.md`.
 
 ## Framing and baud rate
 
@@ -141,11 +142,11 @@ intercept commands [IDC3 0055, 0a97].
 | `08` | 0C8C | **Flush the write cache.** Parameter: drive byte. Bit 3 set: flush the dirty buffers of **all** drives (FE9E = FF skips the per-drive check at 1067). Clear: flush only this drive's. Replies: parameter status, then the result once the physical writes (and verifies) are done; an error has bit 0 added (`41` for a write-protected disc) | yes, after writes (`20`) | trace + IDC3 |
 | `09` | 0CA3 | **Not implemented** (answered as an unknown command): the 7 bytes are the IDC's internal drive table, not yet decoded, and nothing traced uses `09`. Get drive parameters. Parameter: drive 0–7 (else `20`). Replies: status, then 7 bytes from the drive table (IY+8 … IY+14) | not seen | IDC3 |
 | `0A` | 0CC0 | **Upload to unit RAM.** Address and length (2 bytes each, low byte first), then status `00` or `20`. On `20` (address below E000, or address + length past FFFF) one more byte follows, from `A`: `20` on overflow, otherwise the length's high byte, and the command ends. On `00`: the data, then a 16-bit check, where the data's byte sum plus the check must be 0 mod 65536; reply `00`, or `10` if not [IDC3 0cc0, 0ef6, 0ee3, 0e78]. The 2 KB RAM is mirrored through E000–FFFF. Implemented exactly (`src/core/idc.c`) | not seen | IDC3 |
-| `0B` | 0CF0 | **Execute code in unit RAM.** Address (2 bytes, low byte first). Below E000 the IDC returns to its idle loop with no reply. Otherwise it replies `00`, `CALL`s the address, and sends whatever the code leaves in `A` [IDC3 0cf0, 0ce7]. **Our device can't run the code** (see "Implementation decision"): it replies `00`, tells the platform (display; the 2 KB RAM saved to the SD card), and sends `40` as the result | not seen | IDC3 |
-| `0C` | 0D01 | **Format track.** Drive, track, `n` (must equal the format's sector count, else `20`), then `n` bytes into E400: the sector numbers in the order they are laid on the track (the interleave). Builds the track and writes it with FDC Write Track (`F4`) [IDC3 0317, 0363–03b7]; then re-initialises the drive tables | not seen | IDC3 |
-| `0D` | 0D35 | **Verify track.** The same parameters as `0C` (drive, track, `n`, `n` sector numbers). Reads each listed sector in turn and stops at the first error [IDC3 04e8–0507] | not seen | IDC3 |
-| `0E` | 0D6B | **Read a physical sector by its ID.** Drive/flags, track, **sector ID** (the ID as recorded, any value, not a record number). Reads that one sector (FDC Read Sector `80`) [IDC3 02a1], then sends the result, `n` (= 128-byte blocks in the sector: `04` for 512 bytes) and `n` × (128 bytes + ack). Seen: `<0E >00 <20 01 05 >00 >00 04 [4 × (128 <00)]`. This is how software reaches non-standard sector IDs | 4MATION games | trace + IDC3 |
-| `0F` | 0D9D | **Write a physical sector by its ID.** Drive/flags, track, sector ID. The unit sends `n` (blocks), receives `n` × 128 (with parity ack/retry), writes the sector (FDC Write Sector `A0`) [IDC3 02f2], then sends the result | not seen | IDC3 |
+| `0B` | 0CF0 | **Execute code in unit RAM.** Address (2 bytes, low byte first). Below E000 the IDC returns to its idle loop with no reply. Otherwise it replies `00`, `CALL`s the address, and sends whatever the code leaves in `A` [IDC3 0cf0, 0ce7]. **Our device can't run the code** (see "Implementation decision"): it replies `00`, reports it on the console (address only; saving the 2 KB RAM to the card is still to do), and sends `40` as the result | not seen | IDC3 |
+| `0C` | 0D01 | **Format track.** Drive, track, `n` (must equal the format's sector count, else `20`), then `n` bytes into E400: the sector numbers in the order they are laid on the track (the interleave). Builds the track and writes it with FDC Write Track (`F4`) [IDC3 0317, 0363–03b7]; then re-initialises the drive tables | FORMAT, FASTCOPY | IDC3 |
+| `0D` | 0D35 | **Verify track.** The same parameters as `0C` (drive, track, `n`, `n` sector numbers). Reads each listed sector in turn and stops at the first error [IDC3 04e8–0507] | FORMAT | IDC3 |
+| `0E` | 0D6B | **Read a physical sector by its ID.** Drive/flags, track, **sector ID** (the ID as recorded, any value, not a record number). Reads that one sector (FDC Read Sector `80`) [IDC3 02a1], then sends the result, `n` (= 128-byte blocks in the sector: `04` for 512 bytes) and `n` × (128 bytes + ack). Seen: `<0E >00 <20 01 05 >00 >00 04 [4 × (128 <00)]`. This is how software reaches non-standard sector IDs | 4MATION games, VERIFY, FASTCOPY, SYSGEN | trace + IDC3 |
+| `0F` | 0D9D | **Write a physical sector by its ID.** Drive/flags, track, sector ID. The unit sends `n` (blocks), receives `n` × 128 (with parity ack/retry), writes the sector (FDC Write Sector `A0`) [IDC3 02f2], then sends the result | FORMAT, FASTCOPY | IDC3 |
 | `10` | 0D99 | **Write a physical sector by its ID, with verify.** As `0F`, then reads the sector back and compares it byte for byte [IDC3 02c6–02f1]; a mismatch sets bit 1 of the result | not seen | IDC3 |
 | `11` | 0D66 | Version: replies `31` (`'1'`) | not seen | IDC3 |
 | `12` | 0DCF | Aux port: set the baud rate. Parameter: code 0–7 (else `20`). CTC1/CTC2 from the table at 0DF6, SIO A set to 8N2 | not seen | IDC3 |
@@ -192,7 +193,7 @@ our device it could map to a UART or to USB.
 [IDC3 108f–10b9]. CP/M flushes it with `08` after writes. A delay between a write's reply and the physical write is
 invisible to the 480Z, apart from the result of `08`.
 
-### Implementation status (2026-11-20)
+### Implementation status (2026-11-21)
 
 `src/core/idc.c` and `src/core/idc_disk.c` implement every command except `09` (not decoded, never seen) and the
 aux-port commands `12`–`15` and `17` (the extra serial port; to be mapped to a UART or USB later). `0B` is reported,
@@ -298,10 +299,10 @@ The drive types themselves (40 or 80 tracks) come from links on the IDC board (o
 | 0 | FM (IMD mode 2, 250 kbps) | 16 × 128 bytes | 2 |
 | 1–39 | MFM (IMD mode 5, 250 kbps) | 9 × 512 bytes | 2 |
 
-The 480Z addressed track 0 as records 01–10 (flag `00`) and tracks `01`–`21`+ as records 01–24 (flag `20`):
-36 × 128 = 4608 bytes = one side of a data track. Logical track numbers run past 39, up to at least `21`
-(the SAVE in the write trace went to track `21`), so **the logical track probably counts the two sides**
-(track = cylinder × 2 + side, or one whole side first). This is not yet confirmed.
+The 480Z addresses track 0 as records 01–10 (drive byte `00`) and the other tracks as records 01–24 (`20`):
+36 × 128 = 4608 bytes, one side of a data track. The track byte is the cylinder (hex in the traces: the SAVE in the
+write trace went to track `21`, cylinder 33), and the side comes from the drive byte, each side being a CP/M drive
+of its own ("The drive byte").
 
 ### Copy-protected discs: 4MATION, 1985 [HFE + IMD, decoded by src/flux]
 
@@ -432,8 +433,8 @@ run on the 480Z. We handle it in two stages:
 **`0A`/`0B` (2026-11-20):** `0A` is implemented exactly, because it only stores bytes. Running what `0B` points at
 would need a Z80 plus the IDC ROM (the uploaded code would call its routines, such as `RST 30h` services) plus the
 WD1793, SIO and CTC it drives: in effect running the real ROM, for this one path. Nothing traced uses either command
-(CP/M, the 4MATION loaders, FORMAT, VERIFY). So `0B` is reported, not run: the display shows it, the uploaded RAM is
-saved to the SD card, and the 480Z gets `40` as the result so it doesn't hang. If real software turns out to use it,
+(CP/M, the 4MATION loaders, FORMAT, VERIFY). So `0B` is reported, not run: the console shows its address (saving the uploaded RAM to the SD card is still to
+do), and the 480Z gets `40` as the result so it doesn't hang. If real software turns out to use it,
 the saved code shows what it does. Then either reimplement that routine in C (recognised by a checksum) or add a Z80
 core with the ROM from the SD card and a WD1793 model on `src/core/disk`.
 
@@ -453,9 +454,13 @@ Whether the 480Z ever sends with RTS down is an open question.
 
 ## Open questions
 
-- [ ] Which IDC revision do real MD1 units carry, IDC3 or IDC5? How does IDC5 differ? The two ROMs differ in about 3900 of
-      8192 bytes.
-- [ ] Decode the first parameter byte fully: drive, side, density, and bits 5 and 6.
+- [x] Which IDC revision: **3.1 (`IDC3-1I`) was in the double-drive units, 5.1 (`IDC5-1J`) in the single-drive
+      ones** (owner, 2026-11-21). This is a double-drive unit, so 3.1, which is also MAME's. The ROMs differ in about
+      3900 of 8192 bytes; the differences found so far are the version byte (`51`), the drive-type test stepping
+      up to 49 times instead of 44, and a drive-byte mask in 0f77 (below). Both give a boot block the firmware
+      finds.
+- [ ] The drive byte's bits 3, 4 and 7, and bit 6 (inferred as double-step; "The drive byte"). Bits 0–2 and 5 are
+      decoded.
 - [x] Trace the utilities (`FORMAT`, `VERIFY`, `FASTCOPY`, `COPYFILE`, `SYSGEN`): done, 2026-11-21 ("Commands seen
       so far"). `03` is used (SYSGEN, FASTCOPY); `07`, `09` and `10` are not.
 - [ ] **Does anything use `0A`/`0B` (code executed inside the unit)?** Not CP/M, the 4MATION loaders, or any of RM's
@@ -510,9 +515,11 @@ Whether the 480Z ever sends with RTS down is an open question.
 - [ ] The 480Z side (`FV20_*.ROM`): how it sequences RTS and CTS, and its timeouts. Partly answered in MAME
       (2026-11-21, "Flow control"): RTS rests asserted with a 10 us pulse as the reset, DTR paces the unit two
       bytes at a time during the boot block, and the ROS gives up about 145 ms after the last byte. It never sent
-      with RTS down in any scenario. Still open: the timeouts from the ROM itself, for each command, and the
-      same on the real 480Z.
-- [ ] Which disk image formats (IMD, raw) and geometries we need: SD track 0, DD/QD data tracks, 40 or 80 tracks.
+      with RTS down in any scenario. A slow unit (`--save-delay`) showed it waits at least 4 s for `0C`'s answer
+      and 2 s for a write's. Still open: the timeouts from the ROM itself, for each command, and the same on the
+      real 480Z.
+- [x] Image formats and geometries: IMD and HFE (v1 writable, v3 read-only), FM track 0 with DD or QD data tracks,
+      40 or 80 cylinders, one or two sides (`docs/sd-card.md`; blank ones from `tools/imd/make_blank.py`).
 - [x] A record written (`03`/`04`) to a sector that isn't on the disc (MAME, 2026-11-21): the IDC takes it into its
       buffer; the fourth record of the sector writes it and answers `10`. A part-written buffer fails on `08` with
       `11` [IDC3 112a, 109f]. Implemented; the `missing_sector` scenario matches.
