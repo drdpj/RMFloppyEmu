@@ -25,7 +25,8 @@ copies in testdata/ (read by tests/check_hfe_vs_imd.py's independent IMD reader)
 (docs/protocol.md: the boot block's length at 1B28, the block at 1B2A), never from the firmware. It checks:
   - the start-up report: the ROM and the two images;
   - FF sends the boot block, byte for byte;
-  - every record of drive A (track 0 FM, then both sides of tracks 1-39 MFM) reads back as the local IMD has it;
+  - every record of CP/M's A: and C:, the two sides of drive A's disc (each: track 0 FM, then tracks 1-39 MFM),
+    reads back as the local IMD has it;
   - on drive B: a track reformatted FM 16 x 128, so the IMD on the card must be rewritten, then a record written
     into it, survive a restart of the Pico; then the track is put back as it was (MFM, the original data), and
     that survives a restart too.
@@ -177,17 +178,17 @@ def main():
         got = far.recv(len(boot), timeout=2.0)
         c.check(bytes(b for b, _ in got) == boot, f"FF sends the ROM's {len(boot)}-byte boot block")
 
-        print("drive A, every record")
+        print("A: and C: (drive A's two sides), every record")
         bad, t0, n = [], time.monotonic(), 0
-        for track in range(40):
-            for side in ((0,) if track == 0 else (0, 1)):
+        for side in (0, 1):
+            for track in range(40):
                 db = drive_byte(0, side, track != 0)
                 for rec in range(1, (16 if track == 0 else 36) + 1):
                     st, data = u.read(db, track, rec)
                     n += 1
                     if st != [0, 0, 0] or data != expected(track, side, rec):
                         bad.append(f"{track}/{side}/{rec}: {st}")
-        c.check(not bad, f"{n} records match the local {SYSTEM_DISC}", "; ".join(bad[:5]))
+        c.check(not bad, f"{n} records of A: and C: match the local {SYSTEM_DISC}", "; ".join(bad[:5]))
         print(f"        {(time.monotonic() - t0) / n * 1000:.1f} ms a record")
 
         print(f"drive B, track {TEST_TRACK}: reformat and write, then restart")

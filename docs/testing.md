@@ -117,7 +117,7 @@ timeout 300 ctest --test-dir build-tests -L mame --output-on-failure
   | `no_disc` | `DIR B:` with drive B empty: `80` |
   | `write_protect` | `SAVE` to a write-protected disc: `08` answers `41` |
   | `missing_sector` | `SAVE` to a sector removed from the disc: the fourth record answers `10` |
-  | `verify` | RM's VERIFY, both sides: `06`, `0E`, and `02` for every record |
+  | `verify` | RM's VERIFY, both sides (A: and C:): `06`, `0E`, and `02` for every record |
   | `format` | RM's FORMAT of drive B, double density: `0C`, `0D`, `0F`, and the formatted disc |
   | `format_qd` | the same in quad density: 80 tracks a side, drive bytes `41`/`43`; one declared difference (below) |
   | `fastcopy` | RM's FASTCOPY A to B, reformatting: `0C`, `0E`, `0F`, `03` |
@@ -213,7 +213,8 @@ card, through the same adapter. The card has to be set up as follows (`docs/sd-c
 The test fails at once if the start-up report doesn't show these. It checks:
 
 - `FF` sends the boot block, byte for byte against the ROM's own layout (length at `1B28`, block at `1B2A`)
-- every record of drive A (2824: track 0 FM, then both sides of 1–39) matches the local IMD, read by
+- every record of CP/M's A: and C:, the two sides of drive A's disc (2840: on each, track 0 FM, then 1–39 MFM),
+  matches the local IMD, read by
   `tests/check_hfe_vs_imd.py`'s independent reader
 - on drive B, track 5 is reformatted FM 16 × 128 (so the IMD on the card is rewritten) and a record is written;
   both survive a restart of the Pico. Then the track is put back as it was, and that survives a restart too

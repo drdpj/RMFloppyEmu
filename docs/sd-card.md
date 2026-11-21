@@ -23,6 +23,11 @@ used. With no ROM at all, the 480Z can't load the boot block and won't boot, but
 
 ## Which images are in the drives
 
+The unit has two drives, A and B. On the 480Z each side of a disc is a CP/M drive of its own: the image in drive A
+is CP/M's **A:** (its first side) and **C:** (its second), and the image in drive B is **B:** and **D:**. A
+single-sided image's second side reads as an unformatted disc. Booting with the ROS's `X` command exchanges the
+names, so that drive B holds A: and C:.
+
 At start-up, `image-on-startup` decides:
 
 | Value | Drive A | Drive B |

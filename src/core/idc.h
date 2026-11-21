@@ -54,8 +54,10 @@
 #define IDC_STATUS_CHECKSUM    0x10u /* IDC3 0ce5: upload checksum wrong */
 #define IDC_VERSION_BYTE       0x31u /* IDC3 0d66: '1' */
 
-#define IDC_DRIVES      8u /* logical drives: one side of one physical drive (docs/protocol.md "Parameter bytes") */
-#define IDC_PHYS_DRIVES 2u /* drives this device presents (A:, B:); C: and D: are never ready */
+#define IDC_DRIVES 8u /* logical drives: one side of one physical drive (docs/protocol.md "Parameter bytes") */
+/* Drives this device presents: drive 0 holds CP/M's A: (side 0) and C: (side 1), drive 1 B: and D:
+ * (docs/protocol.md, "The drive byte"). The IDC addresses up to 4; drives 2 and 3 are never ready. */
+#define IDC_PHYS_DRIVES 2u
 
 #define IDC_CMD_LOGIN      0x01u
 #define IDC_CMD_READ       0x02u

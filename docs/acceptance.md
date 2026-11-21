@@ -15,7 +15,8 @@ A failed item blocks the release until it is fixed, or the owner explicitly acce
 - [ ] Power-on order: device first, then 480Z. `B` boots CP/M to `A>`
 - [ ] Power-on order: 480Z first, then device. `B` boots CP/M to `A>`
 - [ ] `X` (boot from another drive) boots from drive B
-- [ ] `DIR` on A: and B: lists the expected files
+- [ ] `DIR` on A:, B:, C: and D: lists the expected files (C: and D: are the second sides of the images in drives A
+      and B)
 - [ ] `TYPE` a text file of more than 16 KB (several extents); the contents are correct
 
 ## Writing

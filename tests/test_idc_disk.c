@@ -193,6 +193,26 @@ static void test_read_side_1_and_fm_track_0(void) {
     expect_record(3 + 128 + 3, 0, 0, 0, 16, 0);
 }
 
+static void test_cpm_drives_c_and_d_are_the_second_sides_of_drives_a_and_b(void) {
+    /* Each side is a CP/M drive: the 480Z's low two bits are A: 00, B: 01, C: 10, D: 11, which the IDC's parity swap
+     * makes drive 0 side 0, drive 1 side 0, drive 0 side 1, drive 1 side 1 (Link 480Z Disc System User Guide,
+     * pp. 5.5-5.7; docs/protocol.md "The drive byte"). Each side has its own FM track 0. */
+    size_t n = cmd(0, 0x02, 0x02, 0, 5); /* C:, track 0 FM, record 5 = sector 5 */
+    script[n++] = (fake_in_t)FB(0x00);
+    n = cmd(n, 0x02, 0x03, 0, 16); /* D:, track 0 FM, record 16 = sector 16 */
+    script[n++] = (fake_in_t)FB(0x00);
+    n = cmd(n, 0x02, 0x23, 7, 7); /* D:, track 7 MFM, record 7: logical sector 1 = ID 6, offset 256 */
+    script[n++] = (fake_in_t)FB(0x00);
+    n = cmd(n, 0x02, 0x21, 7, 7); /* B: the same record on the first side */
+    script[n++] = (fake_in_t)FB(0x00);
+    run(n);
+    TEST_ASSERT_EQUAL_size_t(4 * (3 + 128), f.nout);
+    expect_record(3, 0, 0, 1, 5, 0);
+    expect_record(3 + 131, 1, 0, 1, 16, 0);
+    expect_record(3 + 2 * 131, 1, 7, 1, 6, 256);
+    expect_record(3 + 3 * 131, 1, 7, 0, 6, 256);
+}
+
 static void test_wrong_density_is_record_not_found(void) {
     cmd(0, 0x02, 0x20, 0, 1); /* MFM asked of the FM track 0 */
     run(4);
@@ -613,6 +633,7 @@ int main(void) {
     RUN_TEST(test_read_side_1_and_fm_track_0);
     RUN_TEST(test_mfm_records_follow_the_2_to_1_skew);
     RUN_TEST(test_record_limit_is_the_formats_not_the_tracks);
+    RUN_TEST(test_cpm_drives_c_and_d_are_the_second_sides_of_drives_a_and_b);
     RUN_TEST(test_wrong_density_is_record_not_found);
     RUN_TEST(test_bad_track_record_and_drive);
     RUN_TEST(test_an_80_track_drive_takes_tracks_past_a_40_track_disc);

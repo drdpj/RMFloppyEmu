@@ -106,7 +106,7 @@ The approach is a C reimplementation of the disk unit's command set, with a stag
 
 ## Decided (2026-11-20)
 
-- **Images live on an SD card**, IMD and HFE. They are chosen per drive (two drives, A: and B:) on the 2.8" TFT with
+- **Images live on an SD card**, IMD and HFE. They are chosen per drive (two drives: A:/C: and B:/D:, a CP/M drive per side) on the 2.8" TFT with
   a rotary encoder. **Both formats are writable, safely.** See `docs/hardware.md`.
 
 ## Decisions still to make

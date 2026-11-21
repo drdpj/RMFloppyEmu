@@ -7,7 +7,8 @@ The SD card's SPI clock is 15 MHz: with a level-shifting breakout on jumper wire
 
 ## Decisions
 
-- **Two drives**, A: and B:, as the MD1/MQ2 dual unit (and MAME's `rm_mq2`).
+- **Two drives**, as the MD1/MQ2 dual unit (and MAME's `rm_mq2`). Each side of a disc is a CP/M drive: the first
+  drive holds A: and C:, the second B: and D: (`docs/protocol.md`, "The drive byte").
 - **Images on an SD card**, IMD and HFE, chosen per drive on the display with a rotary encoder.
 - **Writes supported for both formats, safely.** An IMD is rewritten to a temporary file and renamed into place. An
   HFE has the written track re-encoded in place, which needs a C FM/MFM encoder in `src/flux` (useful to Disk

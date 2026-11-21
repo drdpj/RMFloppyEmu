@@ -241,7 +241,19 @@ record 0; what it then does is not known (we answer `20`).
   trace: track 01 record 05 is ID 6]. MFM on track 0 is not traced or worked out (the IDC's cache fill reads IDs in
   sequence there [IDC3 0746]); we leave it unskewed.
 
-CP/M uses track 0 FM on side 0, then tracks 1–39 of both sides (`20` and `22`).
+**Each side of a disc is a CP/M drive of its own** [Link 480Z Disc System User Guide, ch. 5 "Disc Drives" (pp. 5.5–5.7); traces]. The low two bits of the drive byte, *as the
+480Z sends them*, are the CP/M drive: A: `x0`, B: `x1`, C: `x2`, D: `x3`. After the IDC's parity swap that is
+A: = drive 0 side 0, B: = drive 1 side 0, C: = drive 0 side 1, D: = drive 1 side 1. In the guide's words, A: and C:
+are the left drive's label side and other side, B: and D: the right drive's. Each side is formatted as a whole disc:
+track 0 FM 16 × 128 (the system track), then 1–39 MFM 9 × 512. On the system disc both sides are laid out that
+way. CP/M's A: is `00` (track 0) and `20` (tracks 1–39), and never touches side 1. In the traces, only the
+utilities told to do both sides (VERIFY, FASTCOPY) send `02`/`22` (C:) [traces of boot, read, write, verify,
+fastcopy, 2026-11-20/21].
+
+The guide's ROS command `X` loads CP/M from the right-hand drive and exchanges the names, so that it holds A: and
+C:, and the left-hand drive B: and D:. That is presumably the drive map (`05`, and the 8-entry table at FEA4)
+swapped in pairs, but `X` hasn't been traced. A one-drive 480Z uses A: and B: for the same side of whichever disc is in, and C: and D: for the other: its
+firmware asks for the disc to be changed and swaps the names [same pages].
 The drive types themselves (40 or 80 tracks) come from links on the IDC board (owner).
 
 ### Disk geometry: the CP/M 2.2F system disk [image, trace]
@@ -458,9 +470,9 @@ Whether the 480Z ever sends with RTS down is an open question.
 - [ ] Where on the original track the second sector 08 sits, and the exact interleave. It only matters if the timing
       of a real drive with our emulated rotation fails to reach both copies. Verify on real hardware.
 - [ ] Why the Dragon World HFE is reported to load from a Gotek.
-- [ ] How logical track numbers map to cylinder and side. With `0E`, track `02` was cylinder 2 (both sides hold the
-      same data on this disc, so the side is not yet known). CP/M's `02`/`04` went up to track `21` and beyond on a
-      40-cylinder disc, so those count sides.
+- [x] How logical track numbers map to cylinder and side: the track byte is the cylinder, and the side is bit 0 of the
+      drive byte, each side being a CP/M drive of its own (A:/C:, B:/D:; "The drive byte" above, from the user guide
+      and the traces, 2026-11-21).
 - [ ] The structure of the boot block: `00 E0` looks like a load address of E000, followed by `95 00`.
 - [ ] The 480Z side (`FV20_*.ROM`): how it sequences RTS and CTS, and its timeouts. Does it ever send with its
       RTS down (which the IDC's auto enables would ignore, and we don't)? Does it hold DTR up throughout (the IDC
