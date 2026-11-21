@@ -238,9 +238,10 @@ tests/hil/run_mame_linked.py --restore                              # put the ca
 ```
 
 - `tools/mame/rmfe_link.patch` adds `rmfe_link`, an RS-232 slot device for the 480Z's disc port. It relays bytes
-  and all four handshake lines over a socket (MAME's bitbanger, `-bitb socket.HOST:PORT`), and serialises the
-  unit's bytes into the 480Z's SIO at 9600 or 125000, following the IDC's rule: back to 9600 when the 480Z asserts
-  RTS, 125000 once `5A 00 01` has been relayed for a `00`. It also does the transmit half of the IDC's auto
+  and all four handshake lines over a TCP socket to the bridge (`RMFE_LINK`, default `127.0.0.1:4480`). It
+  connects by itself, and again after a hard reset in MAME, so MAME and the bridge can start in either order.
+  It serialises the unit's bytes into the 480Z's SIO at 9600 or 125000, following the IDC's rule: back to 9600
+  when the 480Z asserts RTS, 125000 once `5A 00 01` has been relayed for a `00`. It also does the transmit half of the IDC's auto
   enables, sending to the 480Z only while its DTR is asserted: the 480Z paces the unit with DTR, and the real
   unit only learns of a change a millisecond or so later through USB (`docs/protocol.md`, "Flow control").
   `RMFE_LINK_LOG` logs the link with MAME's emulated time; `RMFE_LINK_DTR_SLACK=n` lets n more bytes through after

@@ -20,10 +20,10 @@ index 4637ea65..66356f7c 100644
  static const z80_daisy_config daisy_chain[] =
 diff --git a/src/mame/rm/rmfe_link.cpp b/src/mame/rm/rmfe_link.cpp
 new file mode 100644
-index 00000000..18358691
+index 00000000..6c88ea9c
 --- /dev/null
 +++ b/src/mame/rm/rmfe_link.cpp
-@@ -0,0 +1,263 @@
+@@ -0,0 +1,343 @@
 +// license:GPL-2.0+
 +// copyright-holders:Daniel Jameson
 +/*
@@ -43,10 +43,20 @@ index 00000000..18358691
 +    <https://www.gnu.org/licenses/>.
 +
 +    Puts a real disc unit (RMFloppyEmu's Pico, through a USB serial adapter) on the 480Z's SIO/4 port in place
-+    of rm_mq2. The bytes and all four handshake lines go over the bitbanger's socket to a bridge program
-+    (RMFloppyEmu's tools/mame/link_bridge.py), which drives the adapter.
++    of rm_mq2. The bytes and all four handshake lines go over a TCP socket to a bridge program (RMFloppyEmu's
++    tools/mame/link_bridge.py), which drives the adapter.
 +
-+        mame rm480z -rs232 rmfe_link -bitb socket.127.0.0.1:4480 ...
++        mame rm480z -rs232 rmfe_link ...
++
++    The bridge's address is RMFE_LINK (default 127.0.0.1:4480). The device connects when the machine starts,
++    and again every half second (emulated) while it has no connection, so MAME and the bridge can be started in
++    either order, and a hard reset reconnects. MAME's socket file reads a closed connection as no data, so a
++    bridge that goes away is only noticed when a write fails: after restarting the bridge, hard-reset MAME
++    (Shift+F3). MAME's bitbanger can't carry the socket: on a hard reset it reloads "socket.host:port" as a
++    file name, and the link is lost.
++
++    A soft reset (F3) keeps the connection, and the unit's CTS and DCD as last reported: the 480Z's reset doesn't
++    change them, and the bridge reports only changes.
 +
 +    Messages are two bytes, a type and a value:
 +
@@ -87,7 +97,6 @@ index 00000000..18358691
 +	device_t(mconfig, RMFE_LINK, tag, owner, clock),
 +	device_serial_interface(mconfig, *this),
 +	device_rs232_port_interface(mconfig, *this),
-+	m_stream(*this, "stream"),
 +	m_poll_timer(nullptr),
 +	m_msg_len(0),
 +	m_rts(1),
@@ -98,6 +107,8 @@ index 00000000..18358691
 +	m_switch_after_tx(false),
 +	m_slack(0),
 +	m_slack_used(0),
++	m_unit_cts(1),
++	m_unit_dcd(1),
 +	m_log(nullptr)
 +{
 +}
@@ -108,14 +119,40 @@ index 00000000..18358691
 +		std::fclose(m_log);
 +}
 +
-+void rmfe_link_device::device_add_mconfig(machine_config &config)
++void rmfe_link_device::device_stop()
 +{
-+	BITBANGER(config, m_stream);
++	m_sock.reset();
++}
++
++void rmfe_link_device::connect()
++{
++	std::uint64_t size;
++	if (osd_file::open("socket." + m_address, OPEN_FLAG_READ | OPEN_FLAG_WRITE, m_sock, size)) {
++		m_sock.reset();
++		m_next_connect = machine().time() + attotime::from_msec(500);
++		return;
++	}
++	osd_printf_info("rmfe_link: connected to %s\n", m_address);
++	log("CONNECT", 1);
++	// Bring the bridge up to date: the rate, and the 480Z's lines
++	send_msg('B', m_fast ? 1 : 0);
++	send_lines();
++}
++
++void rmfe_link_device::disconnect(const char *why)
++{
++	osd_printf_warning("rmfe_link: lost the bridge (%s)\n", why);
++	log("CONNECT", 0);
++	m_sock.reset();
++	m_out.clear();
++	m_next_connect = machine().time() + attotime::from_msec(500);
 +}
 +
 +void rmfe_link_device::device_start()
 +{
 +	m_poll_timer = timer_alloc(FUNC(rmfe_link_device::poll), this);
++	const char *address = std::getenv("RMFE_LINK");
++	m_address = (address && *address) ? address : "127.0.0.1:4480";
 +	const char *path = std::getenv("RMFE_LINK_LOG");
 +	if (path && *path)
 +		m_log = std::fopen(path, "w");
@@ -138,10 +175,14 @@ index 00000000..18358691
 +	m_fast = true; // so that set_fast() sends 'B'
 +	set_fast(false);
 +	output_rxd(1);
-+	output_cts(1); // deasserted until the bridge reports the unit's lines
-+	output_dcd(1);
++	// The unit's lines are whatever it last reported: a reset of the 480Z doesn't change them, and the bridge
++	// reports only changes (deasserted until its first report, when it connects)
++	output_cts(m_unit_cts);
++	output_dcd(m_unit_dcd);
 +	output_dsr(1);
 +	send_lines();
++	if (!m_sock)
++		connect();
 +	m_poll_timer->adjust(attotime::from_usec(20), 0, attotime::from_usec(20));
 +}
 +
@@ -153,8 +194,28 @@ index 00000000..18358691
 +
 +void rmfe_link_device::send_msg(uint8_t type, uint8_t value)
 +{
-+	m_stream->output(type);
-+	m_stream->output(value);
++	if (!m_sock)
++		return;
++	m_out.push_back(type);
++	m_out.push_back(value);
++	flush();
++}
++
++// The socket is non-blocking, and still connecting at first: whatever can't be written yet waits for the next poll
++void rmfe_link_device::flush()
++{
++	while (m_sock && !m_out.empty()) {
++		std::uint32_t written = 0;
++		const std::error_condition err = m_sock->write(m_out.data(), 0, m_out.size(), written);
++		if (err == std::errc::resource_unavailable_try_again || err == std::errc::operation_would_block ||
++				err == std::errc::not_connected)
++			return;
++		if (err) {
++			disconnect(err.message().c_str());
++			return;
++		}
++		m_out.erase(0, written);
++	}
 +}
 +
 +void rmfe_link_device::send_lines()
@@ -261,8 +322,25 @@ index 00000000..18358691
 +
 +TIMER_CALLBACK_MEMBER(rmfe_link_device::poll)
 +{
++	if (!m_sock) {
++		if (machine().time() >= m_next_connect)
++			connect();
++		if (!m_sock)
++			return;
++	}
 +	uint8_t buf[256];
-+	const uint32_t n = m_stream->input(buf, sizeof(buf));
++	std::uint32_t n = 0;
++	flush();
++	if (!m_sock)
++		return;
++	const std::error_condition err = m_sock->read(buf, 0, sizeof(buf), n);
++	if (err == std::errc::resource_unavailable_try_again || err == std::errc::operation_would_block ||
++			err == std::errc::not_connected)
++		n = 0;
++	else if (err) {
++		disconnect(err.message().c_str());
++		return;
++	}
 +	for (uint32_t i = 0; i < n; i++) {
 +		m_msg[m_msg_len++] = buf[i];
 +		if (m_msg_len < 2)
@@ -275,8 +353,10 @@ index 00000000..18358691
 +		case 'H':
 +			log("CTS", m_msg[1] & 1);
 +			log("DCD", (m_msg[1] >> 1) & 1);
-+			output_cts((m_msg[1] & 1) ? 0 : 1);
-+			output_dcd((m_msg[1] & 2) ? 0 : 1);
++			m_unit_cts = (m_msg[1] & 1) ? 0 : 1;
++			m_unit_dcd = (m_msg[1] & 2) ? 0 : 1;
++			output_cts(m_unit_cts);
++			output_dcd(m_unit_dcd);
 +			break;
 +		default:
 +			logerror("rmfe_link: unknown message %02x %02x\n", m_msg[0], m_msg[1]);
@@ -289,10 +369,10 @@ index 00000000..18358691
 +DEFINE_DEVICE_TYPE(RMFE_LINK, rmfe_link_device, "rmfe_link", "RMFloppyEmu link (socket to a real disc unit)")
 diff --git a/src/mame/rm/rmfe_link.h b/src/mame/rm/rmfe_link.h
 new file mode 100644
-index 00000000..c74f5569
+index 00000000..eaf4f4a2
 --- /dev/null
 +++ b/src/mame/rm/rmfe_link.h
-@@ -0,0 +1,76 @@
+@@ -0,0 +1,85 @@
 +// license:GPL-2.0+
 +// copyright-holders:Daniel Jameson
 +/*
@@ -318,10 +398,11 @@ index 00000000..c74f5569
 +
 +#include "bus/rs232/rs232.h"
 +#include "diserial.h"
-+#include "imagedev/bitbngr.h"
++#include "osdfile.h"
 +
 +#include <cstdio>
 +#include <deque>
++#include <string>
 +
 +class rmfe_link_device : public device_t, public device_serial_interface, public device_rs232_port_interface
 +{
@@ -336,7 +417,7 @@ index 00000000..c74f5569
 +protected:
 +	virtual void device_start() override ATTR_COLD;
 +	virtual void device_reset() override ATTR_COLD;
-+	virtual void device_add_mconfig(machine_config &config) override ATTR_COLD;
++	virtual void device_stop() override ATTR_COLD;
 +
 +	virtual void tra_callback() override;
 +	virtual void tra_complete() override;
@@ -348,9 +429,15 @@ index 00000000..c74f5569
 +	void send_lines();
 +	void set_fast(bool fast);
 +	void start_next();
++	void connect();
++	void disconnect(const char *why);
++	void flush();
 +	void log(const char *what, int value);
 +
-+	required_device<bitbanger_device> m_stream;
++	std::string m_address;
++	osd_file::ptr m_sock;
++	std::string m_out; // messages not yet written to the socket
++	attotime m_next_connect;
 +	emu_timer *m_poll_timer;
 +	std::deque<uint8_t> m_to_480z;
 +	uint8_t m_msg[2];
@@ -363,6 +450,8 @@ index 00000000..c74f5569
 +	bool m_switch_after_tx;
 +	int m_slack; // bytes that may still start after the 480Z drops DTR (RMFE_LINK_DTR_SLACK; 0 = as the IDC)
 +	int m_slack_used;
++	int m_unit_cts; // the unit's lines as last reported by the bridge, as pin levels (0 = asserted)
++	int m_unit_dcd;
 +	FILE *m_log;
 +};
 +

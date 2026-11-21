@@ -178,8 +178,9 @@ def run_scenario(s, args, mame, roms, testdata, server, console):
 
     snaps = sorted(set(s.snaps) | {s.seconds - 0.5})
     env = dict(os.environ, SDL_VIDEODRIVER="dummy", SDL_AUDIODRIVER="dummy", MQ2_KEYS=s.mq2_keys(),
-               MQ2_SNAP=",".join(f"{t:g}" for t in snaps), RMFE_LINK_LOG=str(out / "link.log"))
-    cmd = [str(mame), "rm480z", "-rompath", str(roms), "-rs232", "rmfe_link", "-bitb", f"socket.127.0.0.1:{port}",
+               MQ2_SNAP=",".join(f"{t:g}" for t in snaps), RMFE_LINK_LOG=str(out / "link.log"),
+               RMFE_LINK=f"127.0.0.1:{port}")
+    cmd = [str(mame), "rm480z", "-rompath", str(roms), "-rs232", "rmfe_link",
            "-autoboot_script", str(ROOT / "tools" / "mame" / "mq2trace.lua"), "-video", "none", "-sound", "none",
            "-seconds_to_run", f"{s.seconds:g}", "-skip_gameinfo"]  # no -nothrottle: real speed
     t0 = time.monotonic()

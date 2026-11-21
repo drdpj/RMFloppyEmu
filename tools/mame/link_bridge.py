@@ -19,9 +19,12 @@
 usage: link_bridge.py [--listen HOST:PORT] [--port LINK_PORT] [--log FILE] [--once]
 
 MAME's rm480z, with the rmfe_link slot device (tools/mame/rmfe_link.patch) in its disc-unit port, connects to
-this bridge as a socket:
+this bridge (at RMFE_LINK, default 127.0.0.1:4480; the two can be started in either order):
 
-    mame rm480z -rs232 rmfe_link -bitb socket.127.0.0.1:4480 ...
+    mame rm480z -rs232 rmfe_link ...
+
+Unless --once, the bridge waits for MAME again after it disconnects, so a hard reset in MAME (Shift+F3), which
+reconnects, carries on. After restarting the bridge itself, hard-reset MAME.
 
 The bridge relays the 480Z's bytes to the adapter and the unit's back, mirrors the 480Z's RTS and DTR onto the
 adapter's, and reports the adapter's CTS and DCD (the unit's DTR and RTS) back to MAME. The adapter is wired to the
@@ -39,6 +42,7 @@ or named with --port or RMFE_LINK_PORT.
 """
 import argparse
 import fcntl
+import os
 import pathlib
 import socket
 import struct
@@ -187,7 +191,8 @@ class Bridge:
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--listen", default="127.0.0.1:4480", help="where MAME connects (default 127.0.0.1:4480)")
+    ap.add_argument("--listen", default=os.environ.get("RMFE_LINK", "127.0.0.1:4480"),
+                    help="where MAME connects (default RMFE_LINK, or 127.0.0.1:4480)")
     ap.add_argument("--port", help="the adapter on the link pins (default: found by USB ID, or RMFE_LINK_PORT)")
     ap.add_argument("--log", type=pathlib.Path, help="log every event with its time")
     ap.add_argument("--once", action="store_true", help="exit when MAME disconnects (default: wait for another)")
