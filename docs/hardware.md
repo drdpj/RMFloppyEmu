@@ -65,6 +65,29 @@ one place (`src/pico/link_uart.c`). GP5, GP8 and GP9 have the Pico's pull-ups on
 idles at mark and RTS and DTR read deasserted. A floating RX would read as breaks, which come in as `00` bytes.
 J5 pin numbers are from the 480Z main board schematic. Check the DIN pinout against the socket before soldering.
 
+### Wiring two MAX3232 modules
+
+A MAX3232 has two drivers and two receivers; the link needs three of each, so two modules. The data lines and the
+480Z's RTS (the reset) share the first. TIN/ROUT are the 3.3 V side (to the Pico), TOUT/RIN the RS-232 side (to the
+480Z). Take the handshake lines from the modules' pins, not their DB9s, which often carry only TXD and RXD.
+
+| Module | TTL side | Pico 2 | RS-232 side | 480Z J5 | 480Z signal |
+|---|---|---|---|---|---|
+| 1 | T1IN | GP4 (pin 6), UART1 TX | T1OUT | 8 | RxD |
+| 1 | R1OUT | GP5 (pin 7), UART1 RX | R1IN | 3 | TxD |
+| 1 | T2IN | GP6 (pin 9) | T2OUT | 5 | CTS |
+| 1 | R2OUT | GP8 (pin 11) | R2IN | 1 | RTS |
+| 2 | T1IN | GP7 (pin 10) | T1OUT | 7 | DCD |
+| 2 | R1OUT | GP9 (pin 12) | R1IN | 2 | DTR |
+| 2 | T2IN | GND (unused; a floating CMOS input can oscillate) | T2OUT | | |
+| 2 | R2OUT | not connected | R2IN | | |
+| both | VCC | **3V3 (pin 36), not 5 V** | GND | 4 | signal earth |
+
+Power the modules from 3.3 V: a receiver's output swings to the module's supply, and at 5 V it would put 5 V on
+GP5, GP8 and GP9. At 3.3 V the drivers still give about ±5.5 V, enough for the 480Z's 75189 receivers. The
+transceivers invert as the firmware expects (`LINK_UART_ASSERTED_LEVEL`), as the FT232R's active-low handshake
+pins did, so no change is needed for them.
+
 ## Pin plan (Pico 2)
 
 The physical pin is the Pico 2's header pin (pin 1 is GP0, at the USB end; the GNDs are 3, 8, 13, 18, 23, 28, 33
