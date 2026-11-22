@@ -157,6 +157,26 @@ The approach is a C reimplementation of the disk unit's command set, with a stag
         tolerated; `format`'s long waits are the formatting itself, as without the menu (90% 111 ms, max 273 ms);
         and `tools/imd/make_blank.py` makes blank discs that format in place (`docs/sd-card.md`).
     - **Next:** test on the real 480Z (`docs/acceptance.md`), and milestone 7, the transceiver.
+- **Milestone 7** (interface hardware): started (2026-11-22).
+  - Two MAX3232 modules on the link pins, an 8-pin DIN socket wired the MD1's way, and RM's own disc unit lead,
+    which is a symmetric null modem (1–5, 2–7, 3–8, 4–4; `docs/hardware.md`, "Wiring two MAX3232 modules").
+  - On the real 480Z (ROS 1.2), at 125000 the boot block went out whole and correctly paced by DTR, but the 480Z lost
+    bytes and showed "Disc Error". Found from the ROS: the third byte of the go-fast reply is the time constant the
+    480Z loads into its CTC0, so the unit sets the 480Z's fast rate (`docs/protocol.md`, "Framing and baud rate").
+    Answering `5A 00 02`, at 62500, the 480Z loaded the boot block, the CP/M system tracks and the directory, and
+    then booted CP/M to `A>` and 4MATION's Flowers of Crystal, whose loader talks to the drive itself.
+  - So the modules can't drive the 480Z's filtered 75189s at 125000: from VSYS, V− sagged to −4.2 V against V+ at
+    +8.5 V; from 3V3 it failed too. Decided (owner, 2026-11-22): the breadboard runs at 62500, and a proper board
+    with better drivers is to follow (`docs/hardware.md`, "For a board").
+  - New: `fast-baud = 125000 | 62500` in `RMFE.CFG` (default 125000, the IDC's; `docs/sd-card.md`), unit-tested in
+    `test_link` and `test_config`. The send side now starts a byte only with the transmitter idle and DTR asserted,
+    as the IDC's SIO does; before, the byte waiting in the FIFO could go out after DTR dropped (it wasn't the cause
+    here, but it was one byte beyond the IDC). The console's `k` key prints the link's last exchanges: bytes each
+    way, bad parity, waits for DTR and how each ended, which is what found the problem.
+  - The FT232R harness is gone (the link pins go through the transceivers), so level 3 (`run_hil.py`,
+    `run_hil_sd.py`) and MAME in the loop (`run_mame_linked.py`) can't run on this set-up; the real 480Z stands in.
+    Level 2, the MAME comparison from recorded traces, runs on the PC as before.
+  - **Next:** the rest of `docs/acceptance.md` at 62500; then the board.
 
 ## Decided (2026-11-20)
 

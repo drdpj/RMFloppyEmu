@@ -180,6 +180,24 @@ static void test_show_commands_is_off_by_default_and_takes_yes_or_no(void) {
     TEST_ASSERT_FALSE(c.show_commands);
 }
 
+static void test_fast_baud_is_125000_by_default_and_takes_62500(void) {
+    TEST_ASSERT_EQUAL_UINT32(125000u, c.fast_baud);
+    parse("fast-baud = 62500\n");
+    TEST_ASSERT_EQUAL_UINT32(62500u, c.fast_baud);
+    TEST_ASSERT_EQUAL_UINT(0, nwarn);
+    parse("Fast-Baud = \"125000\"\n");
+    TEST_ASSERT_EQUAL_UINT32(125000u, c.fast_baud);
+}
+
+static void test_fast_baud_rejects_other_rates_and_keeps_the_last(void) {
+    parse("fast-baud = 62500\nfast-baud = 9600\nfast-baud = 115200\nfast-baud =\n");
+    TEST_ASSERT_EQUAL_UINT32(62500u, c.fast_baud);
+    TEST_ASSERT_EQUAL_UINT(3, nwarn);
+    TEST_ASSERT_EQUAL_STRING("fast-baud must be 125000 or 62500", warn_why[0]);
+    TEST_ASSERT_EQUAL_UINT(2, warn_line[0]);
+    TEST_ASSERT_EQUAL_UINT(4, warn_line[2]);
+}
+
 static void test_rotary_is_full_and_forward_by_default(void) {
     TEST_ASSERT_EQUAL(CONFIG_ROTARY_FULL, c.rotary);
     TEST_ASSERT_FALSE(c.rotary_reverse);
@@ -282,6 +300,8 @@ int main(void) {
     RUN_TEST(test_without_a_warning_callback_bad_lines_are_still_ignored);
     RUN_TEST(test_text_is_read_only_up_to_its_length);
     RUN_TEST(test_show_commands_is_off_by_default_and_takes_yes_or_no);
+    RUN_TEST(test_fast_baud_is_125000_by_default_and_takes_62500);
+    RUN_TEST(test_fast_baud_rejects_other_rates_and_keeps_the_last);
     RUN_TEST(test_rotary_is_full_and_forward_by_default);
     RUN_TEST(test_rotary_takes_each_kind_with_or_without_reverse);
     RUN_TEST(test_rotary_refuses_other_kinds_and_suffixes_and_keeps_its_setting);

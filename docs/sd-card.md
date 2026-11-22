@@ -92,6 +92,8 @@ idc-rom = IDC.ROM
 rotary = full
 # show-commands: yes | no
 show-commands = no
+# fast-baud: 125000 | 62500
+fast-baud = 125000
 ```
 
 A `#` starts a comment only at the beginning of a line, because a path may contain one.
@@ -103,6 +105,7 @@ A `#` starts a comment only at the beginning of a line, because a path may conta
 | `drive-a`, `drive-b` | `auto`, `40`, `80` | `auto` | the drive's type, which a real IDC took from links on its board. `auto`: 80-track for an image with more than 44 cylinders |
 | `idc-rom` | a path | `IDC.ROM` | the IDC ROM image |
 | `show-commands` | `yes`, `no` | `no` | `yes`: the display also shows each command as the unit serves it (above) |
+| `fast-baud` | `125000`, `62500` | `125000` | the rate the link goes fast to. `125000` is the IDC's. The 480Z takes the rate from the unit's reply to `00` (`docs/protocol.md`, "Framing and baud rate"), so `62500` works too, at about half the transfer speed: use it if the RS-232 interface can't drive the 480Z reliably at 125000 (`docs/hardware.md`). The level-3 and MAME-in-the-loop tests need `125000` |
 | `rotary` | `full`, `half`, `quarter`, each optionally followed by `,reverse` | `full` | the knob, as FlashFloppy's option: one step per detent of an encoder with as many detents as pulses (an EC11; `full`), or per half or quarter of a pulse. `,reverse` turns it round, for an encoder that steps the wrong way |
 
 ## Writes

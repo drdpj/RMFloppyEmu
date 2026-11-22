@@ -55,6 +55,18 @@ modules powered at 3.3 V (or one MAX3243); the wiring is in `docs/hardware.md`.
 - **9600 baud** is the rest state. CTC0 runs in counter mode with time constant `0D`: 2 MHz / 13 / 16 = 9615 baud,
   which is +0.16% fast [IDC3 0116, trace].
 - **125000 baud** is the fast state, with CTC0 time constant `01`: 2 MHz / 16 = 125000 exactly [IDC3 0b1d, trace].
+- **The 480Z takes the fast rate from the unit.** The third byte of the reply to `00` (`5A 00 01`) is the time
+  constant the 480Z loads into its own CTC0. The ROS reads `5A`, then `00`, then puts the third byte in H and `47`
+  (CTC control: counter mode, time constant follows) in L, and writes both to port 20 [480Z ROS 1.2 1f04-1f17 ->
+  3cae; ROS 2.2 3f04-3f17 -> 7cae]. Any other first or second byte is "Disc Error". So `02` gives 2 MHz / 16 / 2 =
+  62500, and so on; nothing between 62500 and 125000 can be had. The boot code and the CP/M BIOS honour it too: on
+  the real 480Z (ROS 1.2, 2026-11-22) a unit answering `5A 00 02` and switching to 62500 loaded the boot block, the
+  CP/M system tracks and the directory. The unit offers this as `fast-baud = 62500` (`docs/sd-card.md`), for an interface that can't drive the
+  480Z at 125000 (`docs/hardware.md`); it isn't the IDC's behaviour. Software that talks to the drive directly
+  might not honour it; the 4MATION loader does (Flowers of Crystal booted at 62500 on the real 480Z, 2026-11-22).
+- **The boot block is checked.** The ROS adds every byte after `FF` (load addresses, counts and data) into a 16-bit
+  sum and compares it with the two bytes at the end; a mismatch, or no byte for about 145 ms, is "Disc Error"
+  [480Z ROS 1.2 1f1e-1f4c, 078e].
 - The framing stays 8E1 at both speeds. Only the CTC divider changes [IDC3; the no-parity 2-stop table at 012D is used
   only by command `12`, for channel A].
 - Parity is checked. When receiving a 128-byte block, a parity error makes the unit ask for a resend
@@ -81,8 +93,10 @@ modules powered at 3.3 V (or one MAX3243); the wiring is in `docs/hardware.md`.
     (the IDC's own trace shows the same gaps); during records it stays up. The IDC's auto enables stop it
     within the character it is sending. In MAME, the 480Z still boots if the unit sends up to two more bytes
     after DTR drops, and fails with three: its SIO's 3-byte receive FIFO overruns and the ROS reports
-    "Disc Error". The Pico sends at most one more (the byte queued behind the one being shifted out,
-    `src/pico/link_uart.c`), so it has a byte in hand. A unit that sees DTR only a millisecond late (through
+    "Disc Error". The Pico now sends no more than the IDC (2026-11-22): it starts a byte only with its transmitter
+    idle and DTR asserted (`src/pico/link_uart.c`); before, it could send one more, the byte waiting in its FIFO.
+    The real ROS's receive interrupt drops DTR at each byte and reads into an 8-byte ring, and its byte routine
+    raises DTR again only when the ring is empty [480Z ROS 2.2 357e-359e, 07b5-07dd]. A unit that sees DTR only a millisecond late (through
     USB) sends about 11, and fails.
   - **Timeouts:** the ROS gives up about 145 ms after the last byte it received (144 and 145 ms, in the boot
     block and waiting for `FF`'s answer), pulses RTS and shows "Disc Error". Replies up to 186 ms later were
@@ -447,8 +461,8 @@ hardware flow control), and an edge interrupt on DCD (the 480Z's RTS) in place o
 The 480Z's RTS going asserted interrupts: CTS drops at once, and the next link call returns a reset with both FIFOs
 emptied. The PL011 can't abort the character it is shifting out, so that one byte can still reach the 480Z after
 its RTS. The unit is back at 9600 and receiving within 50 us of RTS; the SDK's own UART calls would leave the
-receiver off for 1.6 ms. A byte is queued only while the 480Z's DTR is asserted, at most one behind the one being sent, which is
-the transmit half of auto enables. The receive half (ignoring bytes while the 480Z's RTS is down) is **not**
+receiver off for 1.6 ms. A byte is started only while the 480Z's DTR is asserted and the transmitter is idle, which is the transmit half
+of auto enables: the SIO checks CTS as each character starts. The receive half (ignoring bytes while the 480Z's RTS is down) is **not**
 reproduced. The 480Z sends only when the unit asserts CTS, and dropping a byte wrongly would hang the exchange.
 Whether the 480Z ever sends with RTS down is an open question.
 

@@ -27,6 +27,7 @@
 
 #include "core/rotary.h"
 #include "core/ui.h"
+#include "pico/link_uart.h"
 #include "pico/mailbox.h"
 #include "pico/menu_host.h"
 #include "pico/sd_store.h"
@@ -153,6 +154,9 @@ static void console_key(uint32_t ms) {
             break;
         case 's':
             report();
+            break;
+        case 'k': /* the link's last exchanges */
+            link_uart_print_log();
             break;
         case 'c': /* show-commands, until the next start */
             ui_set_options(&ui, !ui.show_commands);

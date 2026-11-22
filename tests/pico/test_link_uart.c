@@ -137,6 +137,12 @@ static void test_fast_is_exactly_125000_baud(void) {
     TEST_ASSERT_EQUAL_UINT32(125000, actual_baud());
 }
 
+/* fast-baud = 62500: 2 MHz / 16 / 2, the 480Z's rate for a go-fast reply of 5A 00 02 (core/link.h) */
+static void test_half_is_exactly_62500_baud(void) {
+    io->set_baud(io->ctx, LINK_BAUD_HALF);
+    TEST_ASSERT_EQUAL_UINT32(62500, actual_baud());
+}
+
 static void test_dcd_is_held_asserted_and_cts_starts_deasserted(void) {
     TEST_ASSERT_TRUE(our_line_asserted(LINK_UART_PIN_DCD_OUT));
     TEST_ASSERT_FALSE(our_line_asserted(LINK_UART_PIN_CTS_OUT));
@@ -183,6 +189,10 @@ static void test_every_byte_value_round_trips_at_125000(void) {
     round_trip_every_byte_value(LINK_BAUD_FAST);
 }
 
+static void test_every_byte_value_round_trips_at_62500(void) {
+    round_trip_every_byte_value(LINK_BAUD_HALF);
+}
+
 /* --- sending -------------------------------------------------------------------------------------------- */
 
 static void test_send_waits_for_the_480zs_dtr(void) {
@@ -195,6 +205,38 @@ static void test_send_waits_for_the_480zs_dtr(void) {
     bool pe;
     TEST_ASSERT_EQUAL(LINK_OK, io->recv(io->ctx, &b, &pe));
     TEST_ASSERT_EQUAL_HEX8(0x3C, b);
+}
+
+static volatile unsigned landed_before_dtr; /* bytes the loopback had received when the alarm raised DTR */
+
+static int64_t count_then_raise_dtr_alarm(alarm_id_t id, void *user) {
+    (void)id;
+    (void)user;
+    unsigned n = 0;
+    while (uart_is_readable(uart1)) {
+        (void)uart_get_hw(uart1)->dr;
+        n++;
+    }
+    landed_before_dtr = n;
+    drive_480z(LINK_UART_PIN_DTR_IN, true);
+    return 0;
+}
+
+/* The IDC's SIO checks CTS (the 480Z's DTR) as each character starts [IDC3 012c: WR3 E1, auto enables]: once the
+ * 480Z drops DTR, the character being sent finishes and the next waits, even if the unit has already handed it
+ * over. During the boot block the ROS takes two bytes per DTR pulse (docs/protocol.md, "Flow control"). At 9600 a
+ * character takes 1.15 ms, so the second send() comes while the first is still on the wire. */
+static void test_a_byte_handed_over_while_dtr_is_down_waits_for_dtr(void) {
+    TEST_ASSERT_EQUAL(LINK_OK, io->send(io->ctx, 0xA1));
+    drive_480z(LINK_UART_PIN_DTR_IN, false);
+    landed_before_dtr = 99;
+    after_us(5000, count_then_raise_dtr_alarm);
+    TEST_ASSERT_EQUAL(LINK_OK, io->send(io->ctx, 0xB2));
+    TEST_ASSERT_EQUAL_UINT(1, landed_before_dtr); /* 0xA1 only */
+    uint8_t b;
+    bool pe;
+    TEST_ASSERT_EQUAL(LINK_OK, io->recv(io->ctx, &b, &pe));
+    TEST_ASSERT_EQUAL_HEX8(0xB2, b);
 }
 
 static void test_a_record_at_125000_goes_back_to_back(void) {
@@ -342,12 +384,15 @@ int main(void) {
     RUN_TEST(test_the_link_is_8e1_with_fifos);
     RUN_TEST(test_init_is_9600_baud);
     RUN_TEST(test_fast_is_exactly_125000_baud);
+    RUN_TEST(test_half_is_exactly_62500_baud);
     RUN_TEST(test_dcd_is_held_asserted_and_cts_starts_deasserted);
     RUN_TEST(test_undriven_inputs_read_idle);
     RUN_TEST(test_cts_is_asserted_only_while_recv_waits);
     RUN_TEST(test_every_byte_value_round_trips_at_9600);
     RUN_TEST(test_every_byte_value_round_trips_at_125000);
+    RUN_TEST(test_every_byte_value_round_trips_at_62500);
     RUN_TEST(test_send_waits_for_the_480zs_dtr);
+    RUN_TEST(test_a_byte_handed_over_while_dtr_is_down_waits_for_dtr);
     RUN_TEST(test_a_record_at_125000_goes_back_to_back);
     RUN_TEST(test_go_fast_sends_5a_00_01_at_9600_then_switches);
     RUN_TEST(test_rts_while_recv_waits_is_one_reset_and_drops_cts);

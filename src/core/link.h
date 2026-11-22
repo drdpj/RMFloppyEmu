@@ -38,11 +38,17 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define LINK_BAUD_SLOW 9600u   /* CTC0 time constant 0D: 2 MHz / 13 / 16 = 9615 [IDC3 0116] */
-#define LINK_BAUD_FAST 125000u /* CTC0 time constant 01: 2 MHz / 16 [IDC3 0b1d] */
-#define LINK_RECORD    128u    /* bytes per record transfer [IDC3 0f3e, 0f59] */
+/* Both ends clock their SIO from CTC0, counting a 2 MHz clock, at 16 clocks a bit: baud = 2 MHz / 16 / the time
+ * constant [IDC3 0116, 0b1d]. */
+#define LINK_CTC_HZ         2000000u
+#define LINK_CLOCKS_PER_BIT 16u
+#define LINK_BAUD_SLOW      9600u   /* CTC0 time constant 0D: 2 MHz / 13 / 16 = 9615 [IDC3 0116] */
+#define LINK_BAUD_FAST      125000u /* CTC0 time constant 01: 2 MHz / 16, the IDC's [IDC3 0b1d] */
+#define LINK_BAUD_HALF      62500u  /* CTC0 time constant 02: not the IDC's; for an interface that can't do 125000 */
+#define LINK_RECORD         128u    /* bytes per record transfer [IDC3 0f3e, 0f59] */
 
-/* "Go fast" reply to command 00 [IDC3 0b07, trace]. */
+/* "Go fast" reply to command 00: 5A 00, then the time constant the 480Z loads into its CTC0 for the fast rate
+ * [IDC3 0b07, trace; 480Z ROS 1.2 1f04-1f17 -> 3cae, ROS 2.2 3f04-3f17 -> 7cae]. The IDC sends 01. */
 #define LINK_FAST_REPLY_0 0x5Au
 #define LINK_FAST_REPLY_1 0x00u
 #define LINK_FAST_REPLY_2 0x01u
@@ -71,16 +77,24 @@ typedef struct {
 typedef struct {
     const link_io_t *io;
     uint32_t baud;
+    uint32_t fast_baud; /* the rate command 00 switches to: LINK_BAUD_FAST or LINK_BAUD_HALF */
 } link_t;
 
-/* Starts the link at 9600 baud. */
+/* Starts the link at 9600 baud, going fast at 125000 as the IDC does. */
 void link_init(link_t *l, const link_io_t *io);
+
+/* Sets the rate command 00 switches to, from the next 00: LINK_BAUD_FAST (the IDC's) or LINK_BAUD_HALF. */
+void link_set_fast_baud(link_t *l, uint32_t baud);
+
+/* The time constant go-fast sends for a fast rate (the third byte of its reply). */
+uint8_t link_fast_time_constant(uint32_t baud);
 
 /* One byte each way. Parity errors on single bytes are ignored, as the IDC ignores them [IDC3 0a1f]. */
 link_status_t link_get(link_t *l, uint8_t *byte);
 link_status_t link_put(link_t *l, uint8_t byte);
 
-/* Command 00: replies 5A 00 01, waits for it to leave, then switches to 125000 baud. */
+/* Command 00: replies 5A 00 and the fast rate's time constant (01 for 125000), waits for it to leave, then
+ * switches to the fast rate. */
 link_status_t link_go_fast(link_t *l);
 
 /* Sends a 128-byte record, then reads the 480Z's acknowledgement: 00 accepts it, anything else

@@ -1,7 +1,8 @@
 # Hardware
 
-Status (2026-11-21): in development. A USB serial adapter on the link pins stands in for the transceiver
-(`docs/testing.md`, level 3). The SD card is a separate micro-SD breakout on SPI0, not the TFT module's slot.
+Status (2026-11-22): in development. Two MAX3232 modules drive the link, and the real 480Z loads CP/M through them
+at 62500 but not 125000 ("Wiring two MAX3232 modules"); a USB serial adapter on the link pins was the stand-in
+before (`docs/testing.md`, level 3). The SD card is a separate micro-SD breakout on SPI0, not the TFT module's slot.
 The SD card's SPI clock is 15 MHz: with a level-shifting breakout on jumper wires, 25 MHz failed to mount and
 18.75 MHz worked (`src/pico/sd_hw_config.c`). The TFT is an ILI9341 (its ID4 reads `00 93 41`). On
 jumper wires its SPI1 writes were clean at 37.5 MHz and below, and garbled at 75 MHz (67 of 100 strips, window
@@ -41,7 +42,7 @@ as wired below, is B changing before A.
 | 2.8" SPI TFT 240×320 V1.2 (ILI9341, probably) | the display. Its SD slot and touch controller aren't used |
 | micro-SD breakout (SPI) | the SD card, on SPI0 |
 | Rotary encoder with push switch (EC11 type) | A/B/switch to ground (common `C` and one switch pin to GND), internal pull-ups on the Pico |
-| Two **MAX3232** RS-232 modules (2 drivers + 2 receivers each), powered at 3.3 V | the link's 3 drivers and 3 receivers (wiring below). A MAX3243 (3 + 5, plus 4 × 0.1 µF) does it in one chip. No ±12 V supply needed |
+| Two **MAX3232** RS-232 modules (2 drivers + 2 receivers each) | the link's 3 drivers and 3 receivers (wiring below). Cheap modules manage 62500 but not 125000 into the 480Z; for a board, see "For a board" below |
 | Plug for the 480Z's SIO/4 DIN socket | or reuse an MD1 cable |
 | micro-SD card, FAT32 or exFAT | images in the root or in folders (`docs/sd-card.md`). exFAT because cards over 32 GB come formatted that way |
 
@@ -64,30 +65,76 @@ it is true ±12 V RS-232. The unit's side of the cable, as wired in MAME (`rm_mq
 RS-232 drivers and receivers invert. The firmware works in logical terms (asserted or not) and puts the inversion in
 one place (`src/pico/link_uart.c`). GP5, GP8 and GP9 have the Pico's pull-ups on, so with nothing connected RX
 idles at mark and RTS and DTR read deasserted. A floating RX would read as breaks, which come in as `00` bytes.
-J5 pin numbers are from the 480Z main board schematic. Check the DIN pinout against the socket before soldering.
+J5 pin numbers are from the 480Z main board schematic, and RM's LINK 480Z Information File ("Peripheral Interfaces",
+SERIAL I/O 4) gives the same list. The socket is an 8-pin DIN with pin 8 in the centre. Seen from the back panel, with
+the key at the bottom:
+
+```
+        2
+    4       5
+  1     8     3
+    6       7
+       key
+```
+
+Some published drawings show the mirror image of this (the socket from behind), so go by the numbers moulded on the
+connectors, and check with a meter before connecting: with the 480Z on and nothing plugged in, pin 4 is earth (about
+10 Ω to the 480Z's 0 V, through R10), pins 5 and 7 sit a few volts positive (their pull-ups), pin 3 (TxD, idle) at
+about −10 V, and pin 6 is not connected.
 
 ### Wiring two MAX3232 modules
 
 A MAX3232 has two drivers and two receivers; the link needs three of each, so two modules. The data lines and the
-480Z's RTS (the reset) share the first. TIN/ROUT are the 3.3 V side (to the Pico), TOUT/RIN the RS-232 side (to the
+480Z's RTS (the reset) share the first. TIN/ROUT are the logic side (to the Pico), TOUT/RIN the RS-232 side (to the
 480Z). Take the handshake lines from the modules' pins, not their DB9s, which often carry only TXD and RXD.
 
-| Module | TTL side | Pico 2 | RS-232 side | 480Z J5 | 480Z signal |
-|---|---|---|---|---|---|
-| 1 | T1IN | GP4 (pin 6), UART1 TX | T1OUT | 8 | RxD |
-| 1 | R1OUT | GP5 (pin 7), UART1 RX | R1IN | 3 | TxD |
-| 1 | T2IN | GP6 (pin 9) | T2OUT | 5 | CTS |
-| 1 | R2OUT | GP8 (pin 11) | R2IN | 1 | RTS |
-| 2 | T1IN | GP7 (pin 10) | T1OUT | 7 | DCD |
-| 2 | R1OUT | GP9 (pin 12) | R1IN | 2 | DTR |
-| 2 | T2IN | GND (unused; a floating CMOS input can oscillate) | T2OUT | | |
-| 2 | R2OUT | not connected | R2IN | | |
-| both | VCC | **3V3 (pin 36), not 5 V** | GND | 4 | signal earth |
+**The cable.** RM's disc unit interface lead (480Z Serial I/O 4 to the MD1's "480Z" socket) is a symmetric null
+modem: 1–5, 2–7, 3–8 and 4–4, the same lead either way round (checked on an original, 2026-11-22). The MD1's socket
+therefore has the 480Z's own layout, outputs on 1, 2 and 3 and inputs on 5, 7 and 8, and the lead crosses each
+output to the other end's input. The unit's 8-pin DIN socket is wired the MD1's way, so it takes RM's lead:
 
-Power the modules from 3.3 V: a receiver's output swings to the module's supply, and at 5 V it would put 5 V on
-GP5, GP8 and GP9. At 3.3 V the drivers still give about ±5.5 V, enough for the 480Z's 75189 receivers. The
-transceivers invert as the firmware expects (`LINK_UART_ASSERTED_LEVEL`), as the FT232R's active-low handshake
-pins did, so no change is needed for them.
+| Socket pin | Direction | Module | Pico 2 | Lead takes it to 480Z J5 | 480Z signal |
+|---|---|---|---|---|---|
+| 1 | out | 1: T2IN ← GP6 (pin 9), T2OUT → socket | GP6 | 5 | CTS (480Z input) |
+| 2 | out | 2: T1IN ← GP7 (pin 10), T1OUT → socket | GP7 | 7 | DCD (480Z input) |
+| 3 | out | 1: T1IN ← GP4 (pin 6), T1OUT → socket | GP4, UART1 TX | 8 | RxD (480Z input) |
+| 4 | | both GNDs | GND (pin 8) | 4 | signal earth |
+| 5 | in | 1: R2IN ← socket, R2OUT → GP8 (pin 11) | GP8 | 1 | RTS (480Z output) |
+| 6 | | not connected | | | |
+| 7 | in | 2: R1IN ← socket, R1OUT → GP9 (pin 12) | GP9 | 2 | DTR (480Z output) |
+| 8 | in | 1: R1IN ← socket, R1OUT → GP5 (pin 7) | GP5, UART1 RX | 3 | TxD (480Z output) |
+
+Module 2's T2IN goes to GND (a floating CMOS input can oscillate), and its R2OUT is not connected. The transceivers
+invert as the firmware expects (`LINK_UART_ASSERTED_LEVEL`), as the FT232R's active-low handshake pins did.
+
+**Checking it**, before the 480Z is connected: with the Pico running, at the far end of RM's lead, pin 4 is 0 V,
+pins 5 and 7 (CTS and DCD, both asserted while the unit waits for a command) are positive, and pin 8 (our TxD,
+idle at mark) is negative.
+
+**Power.** The RP2350's GPIOs are 5 V tolerant while the chip is powered (not the ADC pins, GP26–GP29, which the
+link doesn't use), unlike the RP2040's. So the modules can run from **VSYS (pin 39)**, putting up to 5 V on GP5, GP8
+and GP9, as long as they are powered from the Pico's own supply and never while it is off. From 3V3 (pin 36) the
+drivers give about ±5.5 V. At 5 V the MAX3232's datasheet asks for C1 ≥ 0.047 µF and C2–C4 ≥ 0.33 µF; modules are
+usually fitted with 0.1 µF for 3.3 V.
+
+**Cheap modules can't drive the 480Z at 125000.** On the real 480Z (ROS 1.2, 2026-11-22), with two inexpensive
+MAX3232 modules, the boot block went out whole and correctly paced at 125000, but the 480Z lost bytes and reported
+"Disc Error" after its timeout; from 3V3 and from VSYS alike. At 62500 it loads CP/M (`fast-baud = 62500`,
+`docs/sd-card.md`). Measured from VSYS with the modules' own capacitors: V+ +8.5 V, but V− only −4.2 V, so mark sat
+at about −4 V against +8.5 V for space. The 480Z's 75189 receivers have 470 pF response-control capacitors and both
+of their thresholds positive (about +1.0 and +1.5 V) [schematic D10829 sheet 6], so slow, lopsided edges shorten
+the bits; the 480Z's own TxD at 125000, from a 75188 at ±12 V, reaches the unit fine. The MAX3232 is guaranteed only
+to 120 kbps (Maxim's part; clones vary), and the MD1 drove the line at ±12 V.
+
+### For a board
+
+- **TI MAX3243E (or TRS3243E):** 3 drivers and 5 receivers in one chip from 3.3 V, guaranteed 250 kbps into 3 kΩ ‖
+  1000 pF, ±15 kV ESD. Not Maxim's MAX3243, guaranteed only 120 kbps. Tie FORCEON and FORCEOFF high so it never
+  powers down. Its drivers give about ±5.4 V, though, like the modules at 3.3 V, which also failed at 125000;
+  so check first (a module with 1 µF capacitors, from 3V3, at 125000) that a good ±5.4 V driver is enough.
+- **If not, ±12 V drivers, as the MD1 had:** a DS14C88 (a low-power 1488) or a 75188 for the 3 drivers, fed from a
+  small 5 V to ±12 V DC-DC converter (for example a Murata NMA0512SC); the receivers can stay a 3.3 V part, or be a
+  1489, whose 5 V output the RP2350 tolerates.
 
 ## Pin plan (Pico 2)
 

@@ -19,14 +19,14 @@
 /*
  * The 480Z link on the Pico 2: link_io_t (core/link.h) on UART1 and four GPIOs, through the RS-232
  * transceiver (docs/hardware.md, "The 480Z link"). The IDC's side of the link, as this reproduces it:
- *   - 8E1, 9600 or 125000 baud (docs/protocol.md, "Framing and baud rate"); the PL011's divisors give both
- *     exactly from the 150 MHz peripheral clock.
+ *   - 8E1, at 9600 and the fast rate, 125000 or 62500 (docs/protocol.md, "Framing and baud rate"); the PL011's
+ *     divisors give each exactly from the 150 MHz peripheral clock.
  *   - The 480Z's CTS (the IDC's DTR) is asserted only while recv() waits for a byte [IDC3 0a36].
  *   - The 480Z's DCD (the IDC's RTS) is held asserted [IDC3 0123: WR5 EA].
  *   - The 480Z's RTS (the IDC's DCD and NMI) going asserted is a reset: the next recv(), send() or drain()
  *     returns LINK_RESET, once, with both FIFOs emptied, as the NMI resets the SIO [IDC3 0066].
- *   - A byte is sent only while the 480Z's DTR (the IDC's CTS) is asserted: the IDC's SIO has auto enables
- *     on [IDC3 012c: WR3 E1], so its transmitter waits for CTS.
+ *   - A byte is started only while the 480Z's DTR (the IDC's CTS) is asserted: the IDC's SIO has auto enables
+ *     on [IDC3 012c: WR3 E1], so its transmitter waits for CTS before each character.
  * There is one link, so the state is static.
  */
 #ifndef RMFE_PICO_LINK_UART_H
@@ -57,5 +57,10 @@ const link_io_t *link_uart_io(void);
  * NULL: nothing. It must return quickly: a byte arriving meanwhile waits in the FIFO until it does. The firmware
  * uses it to do the menu's work on the SD card between commands (src/pico/main.c). Core 0 only. */
 void link_uart_set_idle(void (*fn)(void));
+
+/* Prints the last few exchanges (from one reset by the 480Z to the next) on the console: bytes in and out, bad
+ * parity, waits for DTR, and how long the link was quiet before each ended. For debugging on the real 480Z; may be
+ * called from either core. */
+void link_uart_print_log(void);
 
 #endif

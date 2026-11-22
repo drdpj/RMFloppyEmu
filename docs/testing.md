@@ -84,10 +84,14 @@ timeout 900 tests/pico/run_on_target.py build-pico-tests [test_<module> ...] [--
   by name. There are 8: the `test_real_*` tests in `test_disk`, `test_disk_write` and `test_idc`.
 - **Tests of `src/pico`** are in `tests/pico/test_<module>.c`, run only there, and are built with the `src/pico` files
   they test. `test_link_uart` checks the 480Z link driver with no wiring. The UART runs in the PL011's internal
-  loopback, and the test plays the 480Z's RTS and DTR by driving those input pins. It checks: 8E1; both baud rates;
-  every byte value at both rates; CTS only while waiting; DCD held; sending held off until the 480Z's DTR;
-  a record back to back at 125000; go-fast; the RTS reset (once, from any wait, with both FIFOs emptied and the
-  link back at 9600); and that undriven inputs read idle. Parity errors and the real pin levels need level 3.
+  loopback, and the test plays the 480Z's RTS and DTR by driving those input pins. It checks: 8E1; the three baud
+  rates (9600, 125000 and 62500); every byte value at each; CTS only while waiting; DCD held; sending held off until
+  the 480Z's DTR, including a byte handed over while the one before is still going out; a record back to back at
+  125000; go-fast; the RTS reset (once, from any wait, with both FIFOs emptied and the link back at 9600); and that
+  undriven inputs read idle. Parity errors and the real pin levels need level 3.
+  **Because it drives GP8 and GP9, disconnect the transceiver's receiver outputs from them (module 1 R2OUT and
+  module 2 R1OUT, `docs/hardware.md`) before running `test_link_uart`**: otherwise two outputs fight over each pin.
+  The other modules don't touch the link pins and can run with the transceivers wired.
 - Fixtures must fit in the RP2350's RAM, so they are sized for the synthetic data and check their own capacity
   (`test_idc_disk` makes tracks on demand and keeps only the ones a test changes). Where only the real-data tests need
   a big buffer, `RMFE_TEST_ON_TARGET` (defined only in the target build) gives it a smaller size there

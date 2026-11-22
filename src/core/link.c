@@ -33,7 +33,18 @@ void link_init(link_t *l, const link_io_t *io) {
     RMFE_ASSERT(l && io && io->recv && io->send && io->drain && io->set_baud);
     l->io = io;
     l->baud = LINK_BAUD_SLOW;
+    l->fast_baud = LINK_BAUD_FAST;
     io->set_baud(io->ctx, LINK_BAUD_SLOW);
+}
+
+void link_set_fast_baud(link_t *l, uint32_t baud) {
+    RMFE_ASSERT(l && (baud == LINK_BAUD_FAST || baud == LINK_BAUD_HALF));
+    l->fast_baud = baud;
+}
+
+uint8_t link_fast_time_constant(uint32_t baud) {
+    RMFE_ASSERT(baud == LINK_BAUD_FAST || baud == LINK_BAUD_HALF);
+    return (uint8_t)(LINK_CTC_HZ / LINK_CLOCKS_PER_BIT / baud);
 }
 
 link_status_t link_get(link_t *l, uint8_t *byte) {
@@ -46,15 +57,15 @@ link_status_t link_put(link_t *l, uint8_t byte) {
 }
 
 link_status_t link_go_fast(link_t *l) {
-    static const uint8_t reply[3] = {LINK_FAST_REPLY_0, LINK_FAST_REPLY_1, LINK_FAST_REPLY_2};
+    const uint8_t reply[3] = {LINK_FAST_REPLY_0, LINK_FAST_REPLY_1, link_fast_time_constant(l->fast_baud)};
     for (size_t i = 0; i < sizeof reply; i++) {
         link_status_t st = link_put(l, reply[i]);
         if (st != LINK_OK) return st;
     }
     link_status_t st = check(l, l->io->drain(l->io->ctx));
     if (st != LINK_OK) return st;
-    l->baud = LINK_BAUD_FAST;
-    l->io->set_baud(l->io->ctx, LINK_BAUD_FAST);
+    l->baud = l->fast_baud;
+    l->io->set_baud(l->io->ctx, l->fast_baud);
     return LINK_OK;
 }
 

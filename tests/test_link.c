@@ -28,7 +28,8 @@ static fake_in_t script[1024];
 static uint8_t rec[LINK_RECORD], got[LINK_RECORD];
 
 void setUp(void) {
-    for (unsigned i = 0; i < LINK_RECORD; i++) rec[i] = (uint8_t)(i * 3u + 7u);
+    for (unsigned i = 0; i < LINK_RECORD; i++)
+        rec[i] = (uint8_t)(i * 3u + 7u);
 }
 void tearDown(void) {}
 
@@ -53,6 +54,46 @@ static void test_go_fast_replies_5a_00_01_drains_then_switches(void) {
     TEST_ASSERT_EQUAL_size_t(2, f.nbauds); /* init, then fast */
     TEST_ASSERT_EQUAL_UINT32(LINK_BAUD_FAST, f.bauds[1].baud);
     TEST_ASSERT_EQUAL_size_t(3, f.bauds[1].out_at); /* only after the whole reply */
+}
+
+/* The 480Z loads the reply's third byte into CTC0 as its time constant: 2 MHz / 16 / 2 = 62500 baud
+ * [480Z ROS 1.2 1f11-1f17 -> 3cae; docs/protocol.md, "Framing and baud rate"]. */
+static void test_go_fast_at_62500_replies_5a_00_02_then_switches_to_62500(void) {
+    start(0);
+    link_set_fast_baud(&l, 62500u);
+    TEST_ASSERT_EQUAL(LINK_OK, link_go_fast(&l));
+    const uint8_t want[] = {0x5A, 0x00, 0x02};
+    TEST_ASSERT_EQUAL_size_t(3, f.nout);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(want, f.out, 3);
+    TEST_ASSERT_EQUAL_size_t(2, f.nbauds);
+    TEST_ASSERT_EQUAL_UINT32(62500u, f.bauds[1].baud);
+    TEST_ASSERT_EQUAL_size_t(3, f.bauds[1].out_at);
+    TEST_ASSERT_EQUAL_UINT32(62500u, l.baud);
+}
+
+static void test_the_fast_rate_survives_a_reset(void) {
+    script[0] = (fake_in_t)FRESET;
+    start(1);
+    link_set_fast_baud(&l, 62500u);
+    TEST_ASSERT_EQUAL(LINK_OK, link_go_fast(&l));
+    uint8_t b;
+    TEST_ASSERT_EQUAL(LINK_RESET, link_get(&l, &b));
+    TEST_ASSERT_EQUAL_UINT32(9600u, f.baud);
+    TEST_ASSERT_EQUAL(LINK_OK, link_go_fast(&l));
+    const uint8_t want[] = {0x5A, 0x00, 0x02, 0x5A, 0x00, 0x02};
+    TEST_ASSERT_EQUAL_size_t(6, f.nout);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(want, f.out, 6);
+    TEST_ASSERT_EQUAL_UINT32(62500u, f.baud);
+}
+
+static void test_the_fast_rate_can_be_set_back_to_125000(void) {
+    start(0);
+    link_set_fast_baud(&l, 62500u);
+    link_set_fast_baud(&l, 125000u);
+    TEST_ASSERT_EQUAL(LINK_OK, link_go_fast(&l));
+    const uint8_t want[] = {0x5A, 0x00, 0x01};
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(want, f.out, 3);
+    TEST_ASSERT_EQUAL_UINT32(125000u, f.baud);
 }
 
 static void test_reset_drops_back_to_9600_and_is_reported(void) {
@@ -143,6 +184,9 @@ int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_link_starts_at_9600);
     RUN_TEST(test_go_fast_replies_5a_00_01_drains_then_switches);
+    RUN_TEST(test_go_fast_at_62500_replies_5a_00_02_then_switches_to_62500);
+    RUN_TEST(test_the_fast_rate_survives_a_reset);
+    RUN_TEST(test_the_fast_rate_can_be_set_back_to_125000);
     RUN_TEST(test_reset_drops_back_to_9600_and_is_reported);
     RUN_TEST(test_reset_at_9600_sets_no_new_baud);
     RUN_TEST(test_get_ignores_parity_errors_on_single_bytes);

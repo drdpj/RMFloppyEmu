@@ -19,9 +19,11 @@
 /*
  * The 480Z link on UART1: see link_uart.h for what it reproduces and where the facts come from.
  *
- * The send side keeps at most one byte waiting in the TX FIFO (behind the one being shifted out), so that
- * a byte is queued only while the 480Z's DTR is asserted, as the SIO's auto enables would have it, and
- * a reset finds little in flight. At 125000 baud this still sends back to back.
+ * The send side starts a byte only when the transmitter is idle and the 480Z's DTR is asserted. The IDC's SIO,
+ * with auto enables, checks its CTS (the 480Z's DTR) as each character starts, so after DTR drops it finishes the
+ * one it is sending and no more. A byte left waiting in the PL011's FIFO would go out regardless of DTR: the
+ * 480Z's ROS takes two bytes per DTR pulse during the boot block (docs/protocol.md, "Flow control"). Waiting for
+ * the shifter costs well under a microsecond a byte.
  */
 #include "pico/link_uart.h"
 
@@ -30,8 +32,11 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include <stdio.h>
+
 #include "hardware/gpio.h"
 #include "hardware/sync.h"
+#include "hardware/timer.h"
 #include "hardware/uart.h"
 
 #define LINK_UART uart1
@@ -47,8 +52,36 @@ static volatile bool reset_pending;
 static void (*idle_fn)(void); /* set by core 0 before serving; called only from lu_recv() on core 0 */
 static bool irq_installed;
 
-/* The PL011's divisors for the two rates, worked out at init by the SDK (uart_set_baudrate) */
-static uint32_t slow_ibrd, slow_fbrd, fast_ibrd, fast_fbrd;
+/* The PL011's divisors for the rates core/link.c uses, worked out at init by the SDK (uart_set_baudrate) */
+typedef struct {
+    uint32_t baud, ibrd, fbrd;
+} divisors_t;
+static divisors_t rates[] = {{LINK_BAUD_SLOW, 0, 0}, {LINK_BAUD_FAST, 0, 0}, {LINK_BAUD_HALF, 0, 0}};
+
+/* The last exchanges, for link_uart_print_log(): what the 480Z and the unit did on the wire, to debug the link on
+ * the real machine. An exchange runs from one reset (the 480Z's RTS) to the next. Written by core 0 only; read by
+ * the console on core 1, which may see a record mid-update: it is only a diagnostic. */
+typedef struct {
+    uint32_t start_us, last_us; /* the reset that began it; the last byte in or out */
+    uint32_t rx, rx_parity;     /* bytes from the 480Z, and how many had bad parity */
+    uint32_t tx, tx_fast;       /* bytes to the 480Z, and how many of them at the fast rate */
+    uint32_t fast_baud;         /* that rate */
+    uint32_t dtr_waits;         /* times a byte had to wait for the 480Z's DTR */
+    uint32_t dtr_wait_max_us;   /* the longest of those waits */
+    uint8_t first_rx[4];        /* its first bytes from the 480Z: the command */
+} exchange_t;
+
+#define EXCHANGES 8u
+static exchange_t exchanges[EXCHANGES];
+static volatile unsigned exchange_now; /* the index of the current one */
+static uint32_t sending_at;            /* the rate now: lu_set_baud(), core 0 */
+
+static void __not_in_flash_func(exchange_begin)(void) {
+    unsigned k = (exchange_now + 1u) % EXCHANGES;
+    exchanges[k] = (exchange_t){0};
+    exchanges[k].start_us = exchanges[k].last_us = time_us_32();
+    exchange_now = k;
+}
 
 static inline void set_line(unsigned pin, bool asserted) {
     gpio_put(pin, LEVEL(asserted));
@@ -81,8 +114,12 @@ static void __not_in_flash_func(reprogram)(uint32_t baud, bool flush) {
     uint32_t cr = hw->cr;
     hw->cr = cr & ~(UART_UARTCR_UARTEN_BITS | UART_UARTCR_TXE_BITS | UART_UARTCR_RXE_BITS);
     if (baud) {
-        hw->ibrd = baud == LINK_BAUD_FAST ? fast_ibrd : slow_ibrd;
-        hw->fbrd = baud == LINK_BAUD_FAST ? fast_fbrd : slow_fbrd;
+        const divisors_t *r = NULL;
+        for (unsigned i = 0; i < sizeof rates / sizeof rates[0]; i++)
+            if (rates[i].baud == baud) r = &rates[i];
+        RMFE_ASSERT(r); /* only the rates core/link.c uses */
+        hw->ibrd = r->ibrd;
+        hw->fbrd = r->fbrd;
     }
     uint32_t lcr = hw->lcr_h;
     if (flush) hw->lcr_h = lcr & ~UART_UARTLCR_H_FEN_BITS;
@@ -98,6 +135,7 @@ static bool __not_in_flash_func(take_reset)(void) {
     reset_pending = false;
     restore_interrupts(irq);
     if (!pending) return false;
+    exchange_begin();
     reprogram(0, true);
     uart_hw_t *hw = uart_get_hw(LINK_UART);
     while (!(hw->fr & UART_UARTFR_RXFE_BITS))
@@ -123,6 +161,11 @@ static link_status_t __not_in_flash_func(lu_recv)(void *ctx, uint8_t *byte, bool
             uint32_t dr = hw->dr;
             *byte = (uint8_t)(dr & UART_UARTDR_DATA_BITS);
             *parity_error = (dr & UART_UARTDR_PE_BITS) != 0;
+            exchange_t *x = &exchanges[exchange_now];
+            if (x->rx < sizeof x->first_rx) x->first_rx[x->rx] = *byte;
+            x->rx++;
+            if (*parity_error) x->rx_parity++;
+            x->last_us = time_us_32();
             return LINK_OK;
         }
         if (idle_fn) idle_fn(); /* with CTS up: a byte arriving meanwhile waits in the FIFO */
@@ -136,11 +179,27 @@ void link_uart_set_idle(void (*fn)(void)) {
 static link_status_t __not_in_flash_func(lu_send)(void *ctx, uint8_t byte) {
     (void)ctx;
     uart_hw_t *hw = uart_get_hw(LINK_UART);
+    exchange_t *x = &exchanges[exchange_now];
+    bool waited = false;
+    uint32_t wait_from = 0;
     for (;;) {
         if (take_reset()) return LINK_RESET;
-        if (line_asserted(LINK_UART_PIN_DTR_IN) && (hw->fr & UART_UARTFR_TXFE_BITS)) {
+        bool dtr = line_asserted(LINK_UART_PIN_DTR_IN);
+        if (dtr && !(hw->fr & UART_UARTFR_BUSY_BITS)) {
             hw->dr = byte;
+            x->last_us = time_us_32();
+            if (waited && x->last_us - wait_from > x->dtr_wait_max_us) x->dtr_wait_max_us = x->last_us - wait_from;
+            x->tx++;
+            if (sending_at != LINK_BAUD_SLOW) {
+                x->tx_fast++;
+                x->fast_baud = sending_at;
+            }
             return LINK_OK;
+        }
+        if (!dtr && !waited) {
+            waited = true;
+            wait_from = time_us_32();
+            x->dtr_waits++;
         }
     }
 }
@@ -156,8 +215,8 @@ static link_status_t __not_in_flash_func(lu_drain)(void *ctx) {
 
 static void __not_in_flash_func(lu_set_baud)(void *ctx, uint32_t baud) {
     (void)ctx;
-    RMFE_ASSERT(baud == LINK_BAUD_SLOW || baud == LINK_BAUD_FAST); /* the only rates core/link.c uses */
     reprogram(baud, false);
+    sending_at = baud;
 }
 
 static const link_io_t io = {NULL, lu_recv, lu_send, lu_drain, lu_set_baud};
@@ -180,6 +239,8 @@ static void init_input(unsigned pin) {
 void link_uart_init(void) {
     gpio_set_irq_enabled(LINK_UART_PIN_RTS_IN, ASSERT_EDGE, false);
     reset_pending = false;
+    sending_at = LINK_BAUD_SLOW;
+    exchange_begin();
 
     init_output(LINK_UART_PIN_CTS_OUT, false);
     init_output(LINK_UART_PIN_DCD_OUT, true); /* [IDC3 0123: WR5 EA, RTS on] */
@@ -193,13 +254,14 @@ void link_uart_init(void) {
     gpio_set_function(LINK_UART_PIN_TX, GPIO_FUNC_UART);
     gpio_set_function(LINK_UART_PIN_RX, GPIO_FUNC_UART);
 
-    /* The SDK works out the divisors; both rates are exact at 150 MHz (link_uart.h). Ends at 9600. */
-    (void)uart_init(LINK_UART, LINK_BAUD_FAST);
-    fast_ibrd = uart_get_hw(LINK_UART)->ibrd;
-    fast_fbrd = uart_get_hw(LINK_UART)->fbrd;
-    (void)uart_set_baudrate(LINK_UART, LINK_BAUD_SLOW);
-    slow_ibrd = uart_get_hw(LINK_UART)->ibrd;
-    slow_fbrd = uart_get_hw(LINK_UART)->fbrd;
+    /* The SDK works out the divisors; every rate is exact at 150 MHz (link_uart.h). The last is 9600, the
+     * first: the link starts slow. */
+    (void)uart_init(LINK_UART, LINK_BAUD_SLOW);
+    for (unsigned i = sizeof rates / sizeof rates[0]; i-- > 0;) {
+        (void)uart_set_baudrate(LINK_UART, rates[i].baud);
+        rates[i].ibrd = uart_get_hw(LINK_UART)->ibrd;
+        rates[i].fbrd = uart_get_hw(LINK_UART)->fbrd;
+    }
     uart_set_format(LINK_UART, 8, 1, UART_PARITY_EVEN); /* 8E1 [IDC3 0123: WR4 47] */
     uart_set_hw_flow(LINK_UART, false, false);          /* the handshake lines are GPIOs */
     uart_set_fifo_enabled(LINK_UART, true);
@@ -215,4 +277,24 @@ void link_uart_init(void) {
     }
     gpio_acknowledge_irq(LINK_UART_PIN_RTS_IN, ASSERT_EDGE);
     gpio_set_irq_enabled(LINK_UART_PIN_RTS_IN, ASSERT_EDGE, true);
+}
+
+void link_uart_print_log(void) {
+    uint32_t now = time_us_32();
+    unsigned newest = exchange_now;
+    for (unsigned i = 1; i <= EXCHANGES; i++) {
+        const exchange_t *x = &exchanges[(newest + i) % EXCHANGES];
+        if (!x->start_us) continue; /* never used */
+        bool current = (newest + i) % EXCHANGES == newest;
+        uint32_t end = current ? now : exchanges[(newest + i + 1u) % EXCHANGES].start_us;
+        printf("LINK %s: in %lu (%lu bad parity) [", current ? "now " : "past", (unsigned long)x->rx,
+               (unsigned long)x->rx_parity);
+        for (unsigned k = 0; k < x->rx && k < sizeof x->first_rx; k++)
+            printf(k ? " %02X" : "%02X", x->first_rx[k]);
+        printf("] out %lu (%lu fast, at %lu), DTR waits %lu (longest %lu us), lasted %lu ms, quiet %lu ms at the %s\n",
+               (unsigned long)x->tx, (unsigned long)x->tx_fast, (unsigned long)x->fast_baud,
+               (unsigned long)x->dtr_waits, (unsigned long)x->dtr_wait_max_us,
+               (unsigned long)((end - x->start_us) / 1000u), (unsigned long)((end - x->last_us) / 1000u),
+               current ? "moment" : "end");
+    }
 }

@@ -44,6 +44,9 @@
  *       way round, for an encoder wired or built the other way.
  *   show-commands = yes | no                  (default no)
  *       yes: the display also shows each command as the unit serves it (core/ui.h).
+ *   fast-baud = 125000 | 62500                (default 125000)
+ *       The rate the link goes fast to (command 00). 125000 is the IDC's; the 480Z takes the rate from the unit's
+ *       reply (core/link.h), so 62500 works too, for an RS-232 interface that can't drive the 480Z at 125000.
  *
  * The images listed (for init, and later the display) are as in FlashFloppy's native mode: .imd and .hfe files,
  * leaving out names starting with "." and hidden files, sorted by name ignoring case.
@@ -53,8 +56,10 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #include "core/idc.h"
+#include "core/link.h"
 
 #define CONFIG_PATH_MAX 256u /* a path from the card's root, with its terminating NUL */
 
@@ -78,6 +83,7 @@ typedef struct {
     config_rotary_t rotary;
     bool rotary_reverse;
     bool show_commands;
+    uint32_t fast_baud; /* LINK_BAUD_FAST or LINK_BAUD_HALF */
 } config_t;
 
 /* Told of each line of RMFE.CFG that is ignored: its number (from 1) and why. */

@@ -22,9 +22,9 @@
  *
  * The console can work the menu too, for tests and for using it without a knob: + and - turn, p presses, l is a
  * long press. c turns show-commands on or off until the next start. r redraws the whole screen; d prints it ("SCREEN
- * <row> <attribute>|<text>|"); s reports the peak stacks, the longest menu step on core 0 and the display's clock. w is
- * a test hook: each press adds more time to every save on the card (0, 250, 500, 1000, 2000, 4000 ms, then 0 again), as
- * a slow card would.
+ * <row> <attribute>|<text>|"); s reports the peak stacks, the longest menu step on core 0 and the display's clock. k
+ * prints the link's last exchanges (src/pico/link_uart.h). w is a test hook: each press adds more time to every save on
+ * the card (0, 250, 500, 1000, 2000, 4000 ms, then 0 again), as a slow card would.
  */
 #ifndef RMFE_PICO_PANEL_H
 #define RMFE_PICO_PANEL_H

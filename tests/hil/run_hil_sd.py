@@ -169,6 +169,8 @@ def main():
                 "set up the card as docs/testing.md section 4 says")
         c.check(any(l.startswith(f"SD: B: {SCRATCH_B} (IMD") for l in report), f"B is {SCRATCH_B}",
                 "set up the card as docs/testing.md section 4 says")
+        c.check(any("going fast at 125000 baud" in l for l in report), "the link goes fast at 125000",
+                "RMFE.CFG must not set fast-baud (the test checks the IDC's 5A 00 01)")
         if c.failures:
             sys.exit("the card isn't set up for this test:\n  " + "\n  ".join(c.failures))
 
