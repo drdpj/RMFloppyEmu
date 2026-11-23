@@ -171,6 +171,11 @@ The approach is a C reimplementation of the disk unit's command set, with a stag
     (its `00` arrives with a parity error, its SIO being at 8N2) and every later one at 125000, CP/M booted and ran
     `DIR` and `TYPE` at 125000. Only the ROS's loading of the boot block fails at 125000; why is an open question
     (`docs/protocol.md`). Decided (owner, 2026-11-23): keep the split, as a setting, and find the cause later.
+  - With the modules back on 3V3 (about ±5.5 V), `PIP B:=A:*.*[V]` copied the whole system disc to a blank image
+    and verified it at 125000, with no errors: 550 KB across the link, no parity errors, no resets. So a ±5.4 V
+    transceiver from 3.3 V (the TI MAX3243E) is enough for the board (`docs/hardware.md`, "For a board").
+  - Also passed on the 480Z (2026-11-23): swapping images from the knob at `A>`, and RM's FORMAT and VERIFY of an
+    IMD in drive B, at 125000 with no parity errors (`docs/acceptance.md`).
   - New: `fast-baud = 125000 | 62500` (default 125000, the IDC's) and `boot-baud = 62500 | 125000` (default
     62500) in `RMFE.CFG` (`docs/sd-card.md`, `core/link.h`), unit-tested in `test_link`, `test_config` and
     `test_idc`. The send side now starts a byte only with the transmitter idle and DTR asserted,

@@ -21,7 +21,8 @@ A failed item blocks the release until it is fixed, or the owner explicitly acce
 
 ## Writing
 
-- [ ] `PIP` a file from A: to B:, then compare the copy with the original using a checksum utility
+- [x] `PIP` a file from A: to B:, then compare the copy with the original using a checksum utility (2026-11-23:
+      the whole system disc to a blank image, `PIP B:=A:*.*[V]`, PIP's own verify; same files in `DIR B:`)
 - [ ] `ERA` a file; the directory updates, and the space is reused by the next write
 - [ ] Fill a disk until "disk full"; the image is still consistent afterwards
 - [ ] Power off the device during a write. On restart the image is either unchanged or holds the new data (never a
@@ -34,7 +35,10 @@ A failed item blocks the release until it is fixed, or the owner explicitly acce
 
 - [ ] Every disk format we support boots or reads (SD, DD, QD; single and double sided), one image of each
 - [ ] RM's FORMAT and VERIFY on an IMD and on an HFE in drive B; the formatted image reads back on a PC
-- [ ] Changing disk images while the 480Z is at `A>` behaves as a disk change does (`^C` logs in the new disk)
+      (2026-11-23: the IMD half passes, on a blank IMD from `tools/imd/make_blank.py`, at 125000; the HFE and the
+      read-back on a PC are still to do)
+- [x] Changing disk images while the 480Z is at `A>` behaves as a disk change does (`^C` logs in the new disk)
+      (2026-11-23)
 - [ ] No image in a drive gives the same error on the 480Z as an empty real drive
 
 ## Robustness
@@ -48,4 +52,4 @@ A failed item blocks the release until it is fixed, or the owner explicitly acce
 | Date | Firmware | IDC ROM | ROS | Tester | Result / notes |
 |---|---|---|---|---|---|
 | 2026-11-22 | 7f6f741 | IDC3.1 | 1.2 | owner | First run, not a full pass. Breadboard: two MAX3232 modules and RM's own lead. At 125000 the ROS's boot block fails ("Disc Error"). With `fast-baud = 62500`: `B` boots CP/M 2.2F to `A>`, and 4MATION's Flowers of Crystal boots |
-| 2026-11-23 | 7f6f741 + a test build of `boot-baud` | IDC3.1 | 1.2 | owner | The boot block at 62500 and everything after it at 125000: `B` boots CP/M 2.2F to `A>`, and `DIR` and `TYPE` run at 125000. The rest of the checklist is still to do |
+| 2026-11-23 | 998e1f2 (defaults: `boot-baud` 62500, `fast-baud` 125000) | IDC3.1 | 1.2 | owner | The ROS's boot block at 62500 and everything after it at 125000: `B` boots CP/M 2.2F to `A>`, and `DIR` and `TYPE` run at 125000 (with a test build of the same rule). Modules on 3V3: `PIP B:=A:*.*[V]` to a blank image, no errors; swapping images from the knob at `A>`; FORMAT and VERIFY of drive B (an IMD), all at 125000 with no parity errors on the link. The rest of the checklist is still to do |

@@ -111,13 +111,15 @@ invert as the firmware expects (`LINK_UART_ASSERTED_LEVEL`), as the FT232R's act
 pins 5 and 7 (CTS and DCD, both asserted while the unit waits for a command) are positive, and pin 8 (our TxD,
 idle at mark) is negative.
 
-**Power.** The RP2350's GPIOs are 5 V tolerant while the chip is powered (not the ADC pins, GP26–GP29, which the
-link doesn't use), unlike the RP2040's. So the modules can run from **VSYS (pin 39)**, putting up to 5 V on GP5, GP8
-and GP9, as long as they are powered from the Pico's own supply and never while it is off. From 3V3 (pin 36) the
-drivers give about ±5.5 V. At 5 V the MAX3232's datasheet asks for C1 ≥ 0.047 µF and C2–C4 ≥ 0.33 µF; modules are
+**Power: 3V3 (pin 36).** That is enough for the 480Z at 125000 (below), and keeps 5 V off the Pico's pins. The
+drivers then give about ±5.5 V. VSYS (pin 39) works too: the RP2350's GPIOs are 5 V tolerant while the chip is
+powered (not the ADC pins, GP26–GP29, which the link doesn't use), unlike the RP2040's, so 5 V on GP5, GP8 and GP9
+is safe as long as the modules are powered from the Pico's own supply and never while it is off. At 5 V the MAX3232's datasheet asks for C1 ≥ 0.047 µF and C2–C4 ≥ 0.33 µF; modules are
 usually fitted with 0.1 µF for 3.3 V.
 
-**At 125000** (real 480Z, ROS 1.2, 2026-11-22), two inexpensive MAX3232 modules from VSYS run CP/M at full speed.
+**At 125000** (real 480Z, ROS 1.2, 2026-11-23), two inexpensive MAX3232 modules run CP/M at full speed, from VSYS
+and from 3V3 alike. From 3V3, `PIP B:=A:*.*[V]` copied the whole system disc to a blank image in B and verified it,
+with no errors: 162 KB to the unit and 387 KB back in one exchange, at 125000, with no parity errors or resets.
 Only the ROS's loading of the boot block fails there, which is not the transceivers (`docs/protocol.md`, "Framing
 and baud rate"), so the unit loads it at 62500 (`boot-baud`, `docs/sd-card.md`). Measured on the way: with the
 modules' own capacitors V+ was +8.5 V but V− only −4.2 V; 910 nF ceramics across C1–C4 brought V− to −8.0 V. At
@@ -129,9 +131,8 @@ was within 0.5 us of its 8 us.
 - **TI MAX3243E (or TRS3243E):** 3 drivers and 5 receivers in one chip from 3.3 V, guaranteed 250 kbps into 3 kΩ ‖
   1000 pF, ±15 kV ESD. Not Maxim's MAX3243, guaranteed only 120 kbps. Tie FORCEON and FORCEOFF high so it never
   powers down. Use capacitors that keep their value under bias (X7R or X5R, ≥ 0.47 µF): the modules' own let V−
-  sag. The modules ran at 125000 from VSYS, at about ±8 V; that a ±5.4 V driver from 3.3 V is enough is still to
-  be checked on the 480Z.
-- **±12 V drivers, as the MD1 had,** if a ±5.4 V part proves marginal: a DS14C88 (a low-power 1488) or a 75188 for
+  sag. The modules from 3V3, at about ±5.5 V, ran the 480Z at 125000, so a ±5.4 V driver is enough.
+- **±12 V drivers, as the MD1 had,** are not needed, but would do: a DS14C88 (a low-power 1488) or a 75188 for
   the 3 drivers, fed from a small 5 V to ±12 V DC-DC converter (for example a Murata NMA0512SC); the receivers can
   stay a 3.3 V part, or be a 1489, whose 5 V output the RP2350 tolerates.
 
