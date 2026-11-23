@@ -14,9 +14,9 @@ A failed item blocks the release until it is fixed, or the owner explicitly acce
 
 - [ ] Power-on order: device first, then 480Z. `B` boots CP/M to `A>`
 - [ ] Power-on order: 480Z first, then device. `B` boots CP/M to `A>`
-- [ ] `X` (boot from another drive) boots from drive B
-- [ ] `DIR` on A:, B:, C: and D: lists the expected files (C: and D: are the second sides of the images in drives A
-      and B)
+- [x] `X` (boot from another drive) boots from drive B (2026-11-23: `05` with parameter `01`, the drives swapped)
+- [x] `DIR` on A:, B:, C: and D: lists the expected files (C: and D: are the second sides of the images in drives A
+      and B) (2026-11-23)
 - [ ] `TYPE` a text file of more than 16 KB (several extents); the contents are correct
 
 ## Writing
@@ -35,8 +35,8 @@ A failed item blocks the release until it is fixed, or the owner explicitly acce
 
 - [ ] Every disk format we support boots or reads (SD, DD, QD; single and double sided), one image of each
 - [ ] RM's FORMAT and VERIFY on an IMD and on an HFE in drive B; the formatted image reads back on a PC
-      (2026-11-23: the IMD half passes, on a blank IMD from `tools/imd/make_blank.py`, at 125000; the HFE and the
-      read-back on a PC are still to do)
+      (2026-11-23: FORMAT and VERIFY pass on both, at 125000: a blank IMD from `tools/imd/make_blank.py`, and an HFE;
+      the read-back on a PC is still to do)
 - [x] Changing disk images while the 480Z is at `A>` behaves as a disk change does (`^C` logs in the new disk)
       (2026-11-23)
 - [ ] No image in a drive gives the same error on the 480Z as an empty real drive
@@ -55,4 +55,4 @@ A failed item blocks the release until it is fixed, or the owner explicitly acce
 | Date | Firmware | IDC ROM | ROS | Tester | Result / notes |
 |---|---|---|---|---|---|
 | 2026-11-22 | 7f6f741 | IDC3.1 | 1.2 | owner | First run, not a full pass. Breadboard: two MAX3232 modules and RM's own lead. At 125000 the ROS's boot block fails ("Disc Error"). With `fast-baud = 62500`: `B` boots CP/M 2.2F to `A>`, and 4MATION's Flowers of Crystal boots |
-| 2026-11-23 | 998e1f2 (defaults: `boot-baud` 62500, `fast-baud` 125000) | IDC3.1 | 1.2 | owner | The ROS's boot block at 62500 and everything after it at 125000: `B` boots CP/M 2.2F to `A>`, and `DIR` and `TYPE` run at 125000 (with a test build of the same rule). Modules on 3V3: `PIP B:=A:*.*[V]` to a blank image, no errors; swapping images from the knob at `A>`; FORMAT and VERIFY of drive B (an IMD); 4MATION's Flowers of Crystal and Dragon World boot, Dragon World also from its rebuilt HFE; all at 125000 with no parity errors on the link. The rest of the checklist is still to do |
+| 2026-11-23 | 998e1f2 (defaults: `boot-baud` 62500, `fast-baud` 125000) | IDC3.1 | 1.2 | owner | The ROS's boot block at 62500 and everything after it at 125000: `B` boots CP/M 2.2F to `A>`, and `DIR` and `TYPE` run at 125000 (with a test build of the same rule). Modules on 3V3: `PIP B:=A:*.*[V]` to a blank image, no errors; swapping images from the knob at `A>`; FORMAT and VERIFY of drive B (an IMD); 4MATION's Flowers of Crystal and Dragon World boot, Dragon World also from its rebuilt HFE; FORMAT and VERIFY of an HFE in B; `X` boots from B; `DIR` on A:, B:, C: and D:; all at 125000 with no parity errors on the link. The rest of the checklist is still to do |
