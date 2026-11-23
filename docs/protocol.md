@@ -60,8 +60,9 @@ modules powered at 3.3 V (or one MAX3243); the wiring is in `docs/hardware.md`.
   (CTC control: counter mode, time constant follows) in L, and writes both to port 20 [480Z ROS 1.2 1f04-1f17 ->
   3cae; ROS 2.2 3f04-3f17 -> 7cae]. Any other first or second byte is "Disc Error". So `02` gives 2 MHz / 16 / 2 =
   62500, and so on; nothing between 62500 and 125000 can be had. The boot code and the CP/M BIOS honour it too, and
-  so does the 4MATION loader, which talks to the drive itself (Flowers of Crystal booted at 62500 on the real 480Z,
-  ROS 1.2, 2026-11-22). The unit offers 62500 as `fast-baud` (`docs/sd-card.md`); it isn't the IDC's behaviour.
+  so do the 4MATION loaders, which talk to the drive themselves (on the real 480Z, ROS 1.2: Flowers of Crystal at
+  62500 on 2026-11-22; Flowers of Crystal and Dragon World, from IMD and from Dragon World's rebuilt HFE, at 125000
+  on 2026-11-23). The unit offers 62500 as `fast-baud` (`docs/sd-card.md`); it isn't the IDC's behaviour.
 - **The ROS's SIO runs at 8N2 while it loads the boot block.** Its channel B set-up is `18 14 4C 13 E1 15 EA 12 10
   11 1E`: WR4 `4C` is ×16, no parity, 2 stop bits [480Z ROS 1.2 1cb5, ROS 2.2 3cb5]. So the ROS's `00` and `FF`
   reach an 8E1 receiver with a stop bit where the parity bit should be, and both have even parity: the unit sees a

@@ -45,11 +45,14 @@ A failed item blocks the release until it is fixed, or the owner explicitly acce
 
 - [ ] 480Z reset in the middle of a transfer: the next command works, with no device reset needed
 - [ ] A long session (copy a whole disk three times) completes without errors or retries
-- [ ] Software that talks to the drive directly (list any found, for example FORMAT and disk utilities) works
+- [x] Software that talks to the drive directly (list any found, for example FORMAT and disk utilities) works
+      (2026-11-23: RM's FORMAT and VERIFY; the 4MATION loaders, `0E` sector reads at 125000: Flowers of Crystal
+      from the repaired IMD with both sector 08s, Dragon World from its IMD and from the HFE rebuilt from its flux
+      capture)
 
 ## Results
 
 | Date | Firmware | IDC ROM | ROS | Tester | Result / notes |
 |---|---|---|---|---|---|
 | 2026-11-22 | 7f6f741 | IDC3.1 | 1.2 | owner | First run, not a full pass. Breadboard: two MAX3232 modules and RM's own lead. At 125000 the ROS's boot block fails ("Disc Error"). With `fast-baud = 62500`: `B` boots CP/M 2.2F to `A>`, and 4MATION's Flowers of Crystal boots |
-| 2026-11-23 | 998e1f2 (defaults: `boot-baud` 62500, `fast-baud` 125000) | IDC3.1 | 1.2 | owner | The ROS's boot block at 62500 and everything after it at 125000: `B` boots CP/M 2.2F to `A>`, and `DIR` and `TYPE` run at 125000 (with a test build of the same rule). Modules on 3V3: `PIP B:=A:*.*[V]` to a blank image, no errors; swapping images from the knob at `A>`; FORMAT and VERIFY of drive B (an IMD), all at 125000 with no parity errors on the link. The rest of the checklist is still to do |
+| 2026-11-23 | 998e1f2 (defaults: `boot-baud` 62500, `fast-baud` 125000) | IDC3.1 | 1.2 | owner | The ROS's boot block at 62500 and everything after it at 125000: `B` boots CP/M 2.2F to `A>`, and `DIR` and `TYPE` run at 125000 (with a test build of the same rule). Modules on 3V3: `PIP B:=A:*.*[V]` to a blank image, no errors; swapping images from the knob at `A>`; FORMAT and VERIFY of drive B (an IMD); 4MATION's Flowers of Crystal and Dragon World boot, Dragon World also from its rebuilt HFE; all at 125000 with no parity errors on the link. The rest of the checklist is still to do |
