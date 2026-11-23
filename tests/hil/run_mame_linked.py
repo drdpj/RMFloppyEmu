@@ -156,8 +156,9 @@ def restart_pico(server, console, far):
     report = run_hil_sd.restart(server, console, far)
     if not any("serving the 480Z link" in l for l in report):
         raise SystemExit("the Pico didn't come back after a reset:\n  " + "\n  ".join(report))
-    if not any("going fast at 125000 baud" in l for l in report):  # rmfe_link serialises at the IDC's 125000
-        raise SystemExit("RMFE.CFG must not set fast-baud for this test:\n  " + "\n  ".join(report))
+    # rmfe_link serialises at the IDC's 125000, and MAME's ROS sends its 00 at 8N2 too (core/link.h)
+    if not any("going fast at 125000 baud, the ROS's boot block at 125000 baud" in l for l in report):
+        raise SystemExit("this test needs fast-baud and boot-baud = 125000 in RMFE.CFG:\n  " + "\n  ".join(report))
     return report
 
 

@@ -59,11 +59,24 @@ modules powered at 3.3 V (or one MAX3243); the wiring is in `docs/hardware.md`.
   constant the 480Z loads into its own CTC0. The ROS reads `5A`, then `00`, then puts the third byte in H and `47`
   (CTC control: counter mode, time constant follows) in L, and writes both to port 20 [480Z ROS 1.2 1f04-1f17 ->
   3cae; ROS 2.2 3f04-3f17 -> 7cae]. Any other first or second byte is "Disc Error". So `02` gives 2 MHz / 16 / 2 =
-  62500, and so on; nothing between 62500 and 125000 can be had. The boot code and the CP/M BIOS honour it too: on
-  the real 480Z (ROS 1.2, 2026-11-22) a unit answering `5A 00 02` and switching to 62500 loaded the boot block, the
-  CP/M system tracks and the directory. The unit offers this as `fast-baud = 62500` (`docs/sd-card.md`), for an interface that can't drive the
-  480Z at 125000 (`docs/hardware.md`); it isn't the IDC's behaviour. Software that talks to the drive directly
-  might not honour it; the 4MATION loader does (Flowers of Crystal booted at 62500 on the real 480Z, 2026-11-22).
+  62500, and so on; nothing between 62500 and 125000 can be had. The boot code and the CP/M BIOS honour it too, and
+  so does the 4MATION loader, which talks to the drive itself (Flowers of Crystal booted at 62500 on the real 480Z,
+  ROS 1.2, 2026-11-22). The unit offers 62500 as `fast-baud` (`docs/sd-card.md`); it isn't the IDC's behaviour.
+- **The ROS's SIO runs at 8N2 while it loads the boot block.** Its channel B set-up is `18 14 4C 13 E1 15 EA 12 10
+  11 1E`: WR4 `4C` is ×16, no parity, 2 stop bits [480Z ROS 1.2 1cb5, ROS 2.2 3cb5]. So the ROS's `00` and `FF`
+  reach an 8E1 receiver with a stop bit where the parity bit should be, and both have even parity: the unit sees a
+  parity error on each, every time (seen in MAME and on the real 480Z). The boot code then sets the SIO to 8E1, and
+  the `00`s of the boot code and the CP/M BIOS arrive clean. The ROS's receive interrupt stores every byte into an
+  8-byte ring without looking at errors, dropping DTR at each; its byte routine raises DTR again when the ring is
+  empty [ROS 1.2 157e-159e, 07b5-07dd].
+- **On a real 480Z the ROS couldn't load the boot block at 125000 from this unit** (ROS 1.2, 2026-11-22): every byte
+  went out, paced by DTR two at a time as the IDC's are, and the ROS timed out ("Disc Error"). Everything after the
+  boot block worked at 125000: a unit answering the ROS's `00` with `5A 00 02` (62500) and every later `00` with
+  `5A 00 01` booted CP/M and ran `DIR` and `TYPE`. The line was clean at the 480Z's socket (rise 0.76 us, fall 1.2
+  us, a lone bit within 0.5 us of its 8 us), and neither 10 us of idle between bytes (the IDC's own spacing is 2-9 us)
+  nor sending the boot block at 8N2 helped. The cause is an open question. The unit tells the ROS's `00` by its
+  parity error and answers it at `boot-baud` (default 62500; `docs/sd-card.md`, `core/link.h`). That costs
+  nothing to speak of: the ROS's DTR pacing, not the wire, sets the boot block's time (0.93 s at 62500).
 - **The boot block is checked.** The ROS adds every byte after `FF` (load addresses, counts and data) into a 16-bit
   sum and compares it with the two bytes at the end; a mismatch, or no byte for about 145 ms, is "Disc Error"
   [480Z ROS 1.2 1f1e-1f4c, 078e].
@@ -473,6 +486,10 @@ Whether the 480Z ever sends with RTS down is an open question.
       3900 of 8192 bytes; the differences found so far are the version byte (`51`), the drive-type test stepping
       up to 49 times instead of 44, and a drive-byte mask in 0f77 (below). Both give a boot block the firmware
       finds.
+- [ ] Why the ROS (1.2, on a real 480Z) can't load the boot block from the unit at 125000, when the IDC's works and
+      everything after the boot block runs at 125000 ("Framing and baud rate"). Next to try: start the first byte
+      73 us after `FF` as the IDC does (the unit starts at once, while the ROS is still sending `FF`'s stop bits),
+      and scope the 480Z's DTR (J5-2) through the boot block.
 - [ ] The drive byte's bits 3, 4 and 7, and bit 6 (inferred as double-step; "The drive byte"). Bits 0–2 and 5 are
       decoded.
 - [x] Trace the utilities (`FORMAT`, `VERIFY`, `FASTCOPY`, `COPYFILE`, `SYSGEN`): done, 2026-11-21 ("Commands seen

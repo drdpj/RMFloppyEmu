@@ -67,6 +67,18 @@ static void test_go_fast_from_9600(void) {
     TEST_ASSERT_EQUAL_UINT32(LINK_BAUD_FAST, f.baud);
 }
 
+/* The ROS's 00 (its SIO at 8N2, so bad parity here), then FF: with the boot rate at 62500 the reply is 5A 00 02
+ * and the boot block goes at 62500 (core/link.h, link_set_boot_baud). */
+static void test_the_ros_s_go_fast_and_boot_block_use_the_boot_rate(void) {
+    static const fake_in_t s[] = {FP(0x00), FP(0xFF)};
+    fake480z_init(&f, s, 2);
+    idc_init(&d, &f.io, boot, sizeof boot);
+    link_set_boot_baud(&d.link, 62500u);
+    idc_run(&d);
+    EXPECT_OUT(0x5A, 0x00, 0x02, 0xB0, 0x07, 0xB1, 0x0C, 0x4B);
+    TEST_ASSERT_EQUAL_UINT32(62500u, f.baud);
+}
+
 static void test_boot_block_is_sent_whole_with_no_status_byte(void) {
     RUN(FB(0xFF));
     EXPECT_OUT(0xB0, 0x07, 0xB1, 0x0C, 0x4B);
@@ -247,6 +259,7 @@ int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_param_byte_swaps_01_and_10_only);
     RUN_TEST(test_go_fast_from_9600);
+    RUN_TEST(test_the_ros_s_go_fast_and_boot_block_use_the_boot_rate);
     RUN_TEST(test_boot_block_is_sent_whole_with_no_status_byte);
     RUN_TEST(test_boot_block_without_a_rom_is_an_unknown_command);
     RUN_TEST(test_unknown_commands_get_40_and_no_status_echo);

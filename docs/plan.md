@@ -165,11 +165,15 @@ The approach is a C reimplementation of the disk unit's command set, with a stag
     480Z loads into its CTC0, so the unit sets the 480Z's fast rate (`docs/protocol.md`, "Framing and baud rate").
     Answering `5A 00 02`, at 62500, the 480Z loaded the boot block, the CP/M system tracks and the directory, and
     then booted CP/M to `A>` and 4MATION's Flowers of Crystal, whose loader talks to the drive itself.
-  - So the modules can't drive the 480Z's filtered 75189s at 125000: from VSYS, V− sagged to −4.2 V against V+ at
-    +8.5 V; from 3V3 it failed too. Decided (owner, 2026-11-22): the breadboard runs at 62500, and a proper board
-    with better drivers is to follow (`docs/hardware.md`, "For a board").
-  - New: `fast-baud = 125000 | 62500` in `RMFE.CFG` (default 125000, the IDC's; `docs/sd-card.md`), unit-tested in
-    `test_link` and `test_config`. The send side now starts a byte only with the transmitter idle and DTR asserted,
+  - It isn't the modules (2026-11-23). Fitting 910 nF across their pump capacitors brought V− from −4.2 V to
+    −8.0 V, and the line at the 480Z's socket was clean (rise 0.76 us, fall 1.2 us), yet the boot block still failed
+    at 125000; so did 10 us of idle between bytes and an 8N2 boot block. Then, with only the ROS's exchange at 62500
+    (its `00` arrives with a parity error, its SIO being at 8N2) and every later one at 125000, CP/M booted and ran
+    `DIR` and `TYPE` at 125000. Only the ROS's loading of the boot block fails at 125000; why is an open question
+    (`docs/protocol.md`). Decided (owner, 2026-11-23): keep the split, as a setting, and find the cause later.
+  - New: `fast-baud = 125000 | 62500` (default 125000, the IDC's) and `boot-baud = 62500 | 125000` (default
+    62500) in `RMFE.CFG` (`docs/sd-card.md`, `core/link.h`), unit-tested in `test_link`, `test_config` and
+    `test_idc`. The send side now starts a byte only with the transmitter idle and DTR asserted,
     as the IDC's SIO does; before, the byte waiting in the FIFO could go out after DTR dropped (it wasn't the cause
     here, but it was one byte beyond the IDC). The console's `k` key prints the link's last exchanges: bytes each
     way, bad parity, waits for DTR and how each ended, which is what found the problem.

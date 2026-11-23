@@ -66,6 +66,7 @@ static bool card_back(void) {
     for (unsigned d = 0; d < IDC_PHYS_DRIVES; d++)
         idc_set_drive_type(&idc, d, cfg.drive_type[d]);
     link_set_fast_baud(&idc.link, cfg.fast_baud);
+    link_set_boot_baud(&idc.link, cfg.boot_baud);
     size_t rom_len = 0, boot_len = 0;
     const uint8_t *boot = NULL;
     if (sd_store_read_rom(&cfg, rom, &rom_len)) (void)idc_find_boot_block(rom, rom_len, &boot, &boot_len);
@@ -97,6 +98,7 @@ int main(void) {
     for (unsigned d = 0; d < IDC_PHYS_DRIVES; d++)
         idc_set_drive_type(&idc, d, cfg.drive_type[d]);
     link_set_fast_baud(&idc.link, cfg.fast_baud);
+    link_set_boot_baud(&idc.link, cfg.boot_baud);
 
     mailbox_init();
     menu_host_init(&idc, boot != NULL, &cfg, card_back);
@@ -104,7 +106,8 @@ int main(void) {
     idc.activity_hook = mailbox_note_activity;
     link_uart_set_idle(menu_host_poll);
     panel_start(&cfg);
-    printf("RMFloppyEmu: serving the 480Z link on UART1, going fast at %lu baud\n", (unsigned long)cfg.fast_baud);
+    printf("RMFloppyEmu: serving the 480Z link on UART1, going fast at %lu baud, the ROS's boot block at %lu baud\n",
+           (unsigned long)cfg.fast_baud, (unsigned long)cfg.boot_baud);
     gpio_put(PICO_DEFAULT_LED_PIN, 1);
 
     idc_run(&idc); /* returns only if the link closes, which the UART link never does */

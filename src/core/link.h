@@ -77,14 +77,26 @@ typedef struct {
 typedef struct {
     const link_io_t *io;
     uint32_t baud;
-    uint32_t fast_baud; /* the rate command 00 switches to: LINK_BAUD_FAST or LINK_BAUD_HALF */
+    uint32_t fast_baud;     /* the rate command 00 switches to: LINK_BAUD_FAST or LINK_BAUD_HALF */
+    uint32_t boot_baud;     /* the same, when that 00 came from the 480Z's ROS (link_set_boot_baud) */
+    bool last_parity_error; /* the last byte link_get() returned had a parity error */
 } link_t;
 
-/* Starts the link at 9600 baud, going fast at 125000 as the IDC does. */
+/* Starts the link at 9600 baud, going fast at 125000 every time, as the IDC does. */
 void link_init(link_t *l, const link_io_t *io);
 
 /* Sets the rate command 00 switches to, from the next 00: LINK_BAUD_FAST (the IDC's) or LINK_BAUD_HALF. */
 void link_set_fast_baud(link_t *l, uint32_t baud);
+
+/*
+ * Sets the rate for a 00 from the 480Z's ROS, which then loads the boot block (command FF): LINK_BAUD_FAST (as the
+ * IDC, and the default) or LINK_BAUD_HALF. The ROS sets its SIO to 8N2 (WR4 4C) [480Z ROS 1.2 1cb5, ROS 2.2 3cb5],
+ * so its 00 reaches the unit's 8E1 receiver with a stop bit where the parity bit should be: a parity error, every
+ * time, as 00 has even parity. The boot code and the CP/M BIOS send 8E1, so their 00s arrive clean. On a real 480Z
+ * (ROS 1.2) the ROS lost bytes of the boot block at 125000 though everything after it worked there, and loaded it at
+ * 62500 (docs/protocol.md, "Framing and baud rate").
+ */
+void link_set_boot_baud(link_t *l, uint32_t baud);
 
 /* The time constant go-fast sends for a fast rate (the third byte of its reply). */
 uint8_t link_fast_time_constant(uint32_t baud);
@@ -94,7 +106,7 @@ link_status_t link_get(link_t *l, uint8_t *byte);
 link_status_t link_put(link_t *l, uint8_t byte);
 
 /* Command 00: replies 5A 00 and the fast rate's time constant (01 for 125000), waits for it to leave, then
- * switches to the fast rate. */
+ * switches to the fast rate: the boot rate if the 00 (the last byte link_get() returned) had a parity error. */
 link_status_t link_go_fast(link_t *l);
 
 /* Sends a 128-byte record, then reads the 480Z's acknowledgement: 00 accepts it, anything else

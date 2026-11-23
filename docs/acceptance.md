@@ -47,4 +47,5 @@ A failed item blocks the release until it is fixed, or the owner explicitly acce
 
 | Date | Firmware | IDC ROM | ROS | Tester | Result / notes |
 |---|---|---|---|---|---|
-| 2026-11-22 | 78c19fe + the `fast-baud` change (the next commit) | IDC3.1 | 1.2 | owner | First run, not a full pass. Breadboard: two MAX3232 modules and RM's own lead. At 125000 the boot block fails ("Disc Error"; the modules can't drive the 480Z at that rate, `docs/hardware.md`). With `fast-baud = 62500`: `B` boots CP/M 2.2F to `A>`, and 4MATION's Flowers of Crystal boots. The rest of the checklist is still to do |
+| 2026-11-22 | 7f6f741 | IDC3.1 | 1.2 | owner | First run, not a full pass. Breadboard: two MAX3232 modules and RM's own lead. At 125000 the ROS's boot block fails ("Disc Error"). With `fast-baud = 62500`: `B` boots CP/M 2.2F to `A>`, and 4MATION's Flowers of Crystal boots |
+| 2026-11-23 | 7f6f741 + a test build of `boot-baud` | IDC3.1 | 1.2 | owner | The boot block at 62500 and everything after it at 125000: `B` boots CP/M 2.2F to `A>`, and `DIR` and `TYPE` run at 125000. The rest of the checklist is still to do |

@@ -96,6 +96,56 @@ static void test_the_fast_rate_can_be_set_back_to_125000(void) {
     TEST_ASSERT_EQUAL_UINT32(125000u, f.baud);
 }
 
+/* The 480Z's ROS sends its 00 at 8N2 (WR4 4C) [480Z ROS 1.2 1cb5]: to an 8E1 receiver it has bad parity. */
+static void test_a_00_with_bad_parity_goes_fast_at_the_boot_rate(void) {
+    script[0] = (fake_in_t)FP(0x00);
+    start(1);
+    link_set_boot_baud(&l, 62500u);
+    uint8_t b;
+    TEST_ASSERT_EQUAL(LINK_OK, link_get(&l, &b));
+    TEST_ASSERT_EQUAL(LINK_OK, link_go_fast(&l));
+    const uint8_t want[] = {0x5A, 0x00, 0x02};
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(want, f.out, 3);
+    TEST_ASSERT_EQUAL_UINT32(62500u, f.baud);
+}
+
+static void test_a_clean_00_goes_fast_at_the_fast_rate_whatever_the_boot_rate(void) {
+    script[0] = (fake_in_t)FB(0x00);
+    start(1);
+    link_set_boot_baud(&l, 62500u);
+    uint8_t b;
+    TEST_ASSERT_EQUAL(LINK_OK, link_get(&l, &b));
+    TEST_ASSERT_EQUAL(LINK_OK, link_go_fast(&l));
+    const uint8_t want[] = {0x5A, 0x00, 0x01};
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(want, f.out, 3);
+    TEST_ASSERT_EQUAL_UINT32(125000u, f.baud);
+}
+
+static void test_only_the_last_byte_s_parity_counts(void) {
+    script[0] = (fake_in_t)FP(0x00);
+    script[1] = (fake_in_t)FB(0x00);
+    start(2);
+    link_set_boot_baud(&l, 62500u);
+    uint8_t b;
+    TEST_ASSERT_EQUAL(LINK_OK, link_get(&l, &b));
+    TEST_ASSERT_EQUAL(LINK_OK, link_get(&l, &b));
+    TEST_ASSERT_EQUAL(LINK_OK, link_go_fast(&l));
+    TEST_ASSERT_EQUAL_HEX8(0x01, f.out[2]);
+    TEST_ASSERT_EQUAL_UINT32(125000u, f.baud);
+}
+
+/* Without link_set_boot_baud the link is the IDC's: 5A 00 01 whatever the parity [IDC3 0a1f, 0b07]. */
+static void test_by_default_a_00_with_bad_parity_goes_fast_at_125000(void) {
+    script[0] = (fake_in_t)FP(0x00);
+    start(1);
+    uint8_t b;
+    TEST_ASSERT_EQUAL(LINK_OK, link_get(&l, &b));
+    TEST_ASSERT_EQUAL(LINK_OK, link_go_fast(&l));
+    const uint8_t want[] = {0x5A, 0x00, 0x01};
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(want, f.out, 3);
+    TEST_ASSERT_EQUAL_UINT32(125000u, f.baud);
+}
+
 static void test_reset_drops_back_to_9600_and_is_reported(void) {
     script[0] = (fake_in_t)FRESET;
     start(1);
@@ -187,6 +237,10 @@ int main(void) {
     RUN_TEST(test_go_fast_at_62500_replies_5a_00_02_then_switches_to_62500);
     RUN_TEST(test_the_fast_rate_survives_a_reset);
     RUN_TEST(test_the_fast_rate_can_be_set_back_to_125000);
+    RUN_TEST(test_a_00_with_bad_parity_goes_fast_at_the_boot_rate);
+    RUN_TEST(test_a_clean_00_goes_fast_at_the_fast_rate_whatever_the_boot_rate);
+    RUN_TEST(test_only_the_last_byte_s_parity_counts);
+    RUN_TEST(test_by_default_a_00_with_bad_parity_goes_fast_at_125000);
     RUN_TEST(test_reset_drops_back_to_9600_and_is_reported);
     RUN_TEST(test_reset_at_9600_sets_no_new_baud);
     RUN_TEST(test_get_ignores_parity_errors_on_single_bytes);

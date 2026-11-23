@@ -87,6 +87,7 @@ void config_defaults(config_t *c) {
     c->rotary_reverse = false;
     c->show_commands = false;
     c->fast_baud = LINK_BAUD_FAST;
+    c->boot_baud = LINK_BAUD_HALF;
 }
 
 static void warn_line(config_warn_fn warn, void *ctx, unsigned line, const char *why) {
@@ -169,6 +170,14 @@ static const char *parse_option(config_t *c, span_t key, span_t v) {
             c->fast_baud = LINK_BAUD_HALF;
         } else {
             return "fast-baud must be 125000 or 62500";
+        }
+    } else if (is(key, "boot-baud")) {
+        if (is(v, "125000")) {
+            c->boot_baud = LINK_BAUD_FAST;
+        } else if (is(v, "62500")) {
+            c->boot_baud = LINK_BAUD_HALF;
+        } else {
+            return "boot-baud must be 62500 or 125000";
         }
     } else if (is(key, "rotary")) {
         config_rotary_t kind;

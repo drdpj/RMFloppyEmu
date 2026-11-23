@@ -47,6 +47,9 @@
  *   fast-baud = 125000 | 62500                (default 125000)
  *       The rate the link goes fast to (command 00). 125000 is the IDC's; the 480Z takes the rate from the unit's
  *       reply (core/link.h), so 62500 works too, for an RS-232 interface that can't drive the 480Z at 125000.
+ *   boot-baud = 62500 | 125000                (default 62500)
+ *       The same, for the 480Z's ROS loading the boot block (core/link.h, link_set_boot_baud): a real 480Z lost
+ *       bytes of it at 125000 though everything after it worked there. 125000 is the IDC's.
  *
  * The images listed (for init, and later the display) are as in FlashFloppy's native mode: .imd and .hfe files,
  * leaving out names starting with "." and hidden files, sorted by name ignoring case.
@@ -84,6 +87,7 @@ typedef struct {
     bool rotary_reverse;
     bool show_commands;
     uint32_t fast_baud; /* LINK_BAUD_FAST or LINK_BAUD_HALF */
+    uint32_t boot_baud; /* the same, for the ROS's boot block */
 } config_t;
 
 /* Told of each line of RMFE.CFG that is ignored: its number (from 1) and why. */

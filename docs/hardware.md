@@ -1,7 +1,7 @@
 # Hardware
 
-Status (2026-11-22): in development. Two MAX3232 modules drive the link, and the real 480Z loads CP/M through them
-at 62500 but not 125000 ("Wiring two MAX3232 modules"); a USB serial adapter on the link pins was the stand-in
+Status (2026-11-22): in development. Two MAX3232 modules drive the link, and the real 480Z boots CP/M through them
+and runs at 125000, with the ROS's boot block at 62500 ("Wiring two MAX3232 modules"); a USB serial adapter on the link pins was the stand-in
 before (`docs/testing.md`, level 3). The SD card is a separate micro-SD breakout on SPI0, not the TFT module's slot.
 The SD card's SPI clock is 15 MHz: with a level-shifting breakout on jumper wires, 25 MHz failed to mount and
 18.75 MHz worked (`src/pico/sd_hw_config.c`). The TFT is an ILI9341 (its ID4 reads `00 93 41`). On
@@ -42,7 +42,7 @@ as wired below, is B changing before A.
 | 2.8" SPI TFT 240×320 V1.2 (ILI9341, probably) | the display. Its SD slot and touch controller aren't used |
 | micro-SD breakout (SPI) | the SD card, on SPI0 |
 | Rotary encoder with push switch (EC11 type) | A/B/switch to ground (common `C` and one switch pin to GND), internal pull-ups on the Pico |
-| Two **MAX3232** RS-232 modules (2 drivers + 2 receivers each) | the link's 3 drivers and 3 receivers (wiring below). Cheap modules manage 62500 but not 125000 into the 480Z; for a board, see "For a board" below |
+| Two **MAX3232** RS-232 modules (2 drivers + 2 receivers each) | the link's 3 drivers and 3 receivers (wiring below). They run the 480Z at 125000; for a board, see "For a board" below |
 | Plug for the 480Z's SIO/4 DIN socket | or reuse an MD1 cable |
 | micro-SD card, FAT32 or exFAT | images in the root or in folders (`docs/sd-card.md`). exFAT because cards over 32 GB come formatted that way |
 
@@ -117,24 +117,23 @@ and GP9, as long as they are powered from the Pico's own supply and never while 
 drivers give about ±5.5 V. At 5 V the MAX3232's datasheet asks for C1 ≥ 0.047 µF and C2–C4 ≥ 0.33 µF; modules are
 usually fitted with 0.1 µF for 3.3 V.
 
-**Cheap modules can't drive the 480Z at 125000.** On the real 480Z (ROS 1.2, 2026-11-22), with two inexpensive
-MAX3232 modules, the boot block went out whole and correctly paced at 125000, but the 480Z lost bytes and reported
-"Disc Error" after its timeout; from 3V3 and from VSYS alike. At 62500 it loads CP/M (`fast-baud = 62500`,
-`docs/sd-card.md`). Measured from VSYS with the modules' own capacitors: V+ +8.5 V, but V− only −4.2 V, so mark sat
-at about −4 V against +8.5 V for space. The 480Z's 75189 receivers have 470 pF response-control capacitors and both
-of their thresholds positive (about +1.0 and +1.5 V) [schematic D10829 sheet 6], so slow, lopsided edges shorten
-the bits; the 480Z's own TxD at 125000, from a 75188 at ±12 V, reaches the unit fine. The MAX3232 is guaranteed only
-to 120 kbps (Maxim's part; clones vary), and the MD1 drove the line at ±12 V.
+**At 125000** (real 480Z, ROS 1.2, 2026-11-22), two inexpensive MAX3232 modules from VSYS run CP/M at full speed.
+Only the ROS's loading of the boot block fails there, which is not the transceivers (`docs/protocol.md`, "Framing
+and baud rate"), so the unit loads it at 62500 (`boot-baud`, `docs/sd-card.md`). Measured on the way: with the
+modules' own capacitors V+ was +8.5 V but V− only −4.2 V; 910 nF ceramics across C1–C4 brought V− to −8.0 V. At
+the 480Z's socket the data line then rose in 0.76 us and fell in 1.2 us, swinging about +8.7 V to −6 V; a lone bit
+was within 0.5 us of its 8 us.
 
 ### For a board
 
 - **TI MAX3243E (or TRS3243E):** 3 drivers and 5 receivers in one chip from 3.3 V, guaranteed 250 kbps into 3 kΩ ‖
   1000 pF, ±15 kV ESD. Not Maxim's MAX3243, guaranteed only 120 kbps. Tie FORCEON and FORCEOFF high so it never
-  powers down. Its drivers give about ±5.4 V, though, like the modules at 3.3 V, which also failed at 125000;
-  so check first (a module with 1 µF capacitors, from 3V3, at 125000) that a good ±5.4 V driver is enough.
-- **If not, ±12 V drivers, as the MD1 had:** a DS14C88 (a low-power 1488) or a 75188 for the 3 drivers, fed from a
-  small 5 V to ±12 V DC-DC converter (for example a Murata NMA0512SC); the receivers can stay a 3.3 V part, or be a
-  1489, whose 5 V output the RP2350 tolerates.
+  powers down. Use capacitors that keep their value under bias (X7R or X5R, ≥ 0.47 µF): the modules' own let V−
+  sag. The modules ran at 125000 from VSYS, at about ±8 V; that a ±5.4 V driver from 3.3 V is enough is still to
+  be checked on the 480Z.
+- **±12 V drivers, as the MD1 had,** if a ±5.4 V part proves marginal: a DS14C88 (a low-power 1488) or a 75188 for
+  the 3 drivers, fed from a small 5 V to ±12 V DC-DC converter (for example a Murata NMA0512SC); the receivers can
+  stay a 3.3 V part, or be a 1489, whose 5 V output the RP2350 tolerates.
 
 ## Pin plan (Pico 2)
 
