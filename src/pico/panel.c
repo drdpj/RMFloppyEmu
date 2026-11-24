@@ -22,6 +22,10 @@
  * the loop also samples them every pass, which times the switch's debounce and long press (core/rotary.h).
  * GPIO interrupts rather than PIO: the knob changes a few hundred times a second at most, and core 1 has nothing
  * more urgent to do; core 0's GPIO interrupt (the 480Z's RTS) is its own.
+ *
+ * The display is the OLED if RMFE.CFG's display-type asks for one (or is auto) and one answers on I2C, otherwise
+ * the TFT. On the OLED the menu's rows (core/ui.h, its OLED layouts) are 7 x 13 rows from the top, then the status
+ * line at the bottom: under a rule in 5 x 8 on a 128 x 64 panel, in the last 6 rows in 4 x 6 on a 128 x 32.
  */
 #include "pico/panel.h"
 
@@ -30,6 +34,7 @@
 #include "pico/link_uart.h"
 #include "pico/mailbox.h"
 #include "pico/menu_host.h"
+#include "pico/oled.h"
 #include "pico/sd_store.h"
 #include "pico/stack_meter.h"
 #include "pico/tft.h"
@@ -63,6 +68,15 @@ static ui_t ui;
 static rotary_t knob;
 static tft_controller_t controller;
 static uint32_t tft_hz;
+static bool on_oled;
+static unsigned oled_height; /* 64 or 32 */
+static uint32_t oled_hz;
+
+_Static_assert(UI_DOT_LIT == OLED_DOT_FILLED && UI_DOT_OUT == OLED_DOT_HOLLOW && UI_ELLIPSIS == OLED_ELLIPSIS,
+               "the menu's own characters are the OLED's");
+_Static_assert(UI_ELLIPSIS == TFT_ELLIPSIS, "and the TFT's");
+
+static void oled_layout(void);
 
 static const uint16_t fg[] = {
     [UI_ATTR_NORMAL] = TFT_RGB565(230, 230, 230), [UI_ATTR_TITLE] = TFT_RGB565(0, 0, 0),
@@ -127,11 +141,15 @@ static void feed(uint32_t pins, uint32_t ms) {
 static void report(void) {
     uint32_t size0, size1;
     uint32_t peak0 = stack_meter_peak(0, &size0), peak1 = stack_meter_peak(1, &size1);
-    printf("STATS: core0_stack=%lu/%lu core1_stack=%lu/%lu menu_step_max_us=%lu tft_khz=%lu knob_missed=%lu "
-           "knob_dropped=%lu\n",
-           (unsigned long)peak0, (unsigned long)size0, (unsigned long)peak1, (unsigned long)size1,
-           (unsigned long)menu_host_longest_step_us(), (unsigned long)(tft_hz / 1000u), (unsigned long)knob.missed,
-           (unsigned long)ring_dropped);
+    printf("STATS: core0_stack=%lu/%lu core1_stack=%lu/%lu menu_step_max_us=%lu ", (unsigned long)peak0,
+           (unsigned long)size0, (unsigned long)peak1, (unsigned long)size1,
+           (unsigned long)menu_host_longest_step_us());
+    if (on_oled) {
+        printf("oled_khz=%lu oled_errors=%lu ", (unsigned long)(oled_hz / 1000u), (unsigned long)oled_errors());
+    } else {
+        printf("tft_khz=%lu ", (unsigned long)(tft_hz / 1000u));
+    }
+    printf("knob_missed=%lu knob_dropped=%lu\n", (unsigned long)knob.missed, (unsigned long)ring_dropped);
 }
 
 static void console_key(uint32_t ms) {
@@ -160,6 +178,15 @@ static void console_key(uint32_t ms) {
             break;
         case 'c': /* show-commands, until the next start */
             ui_set_options(&ui, !ui.show_commands);
+            break;
+        case 'h': /* the OLED's height, until the next start */
+            if (on_oled) {
+                uint8_t addr;
+                oled_height = oled_height == 64u ? 32u : 64u;
+                (void)oled_init(oled_height, settings->display_rotate, &addr, &oled_hz);
+                oled_layout();
+                printf("UI: OLED 128x%u until the next start\n", oled_height);
+            }
             break;
         case 'w': { /* test hook: slow saves (sd_store_set_save_delay) */
             static const uint32_t delays[] = {0, 250, 500, 1000, 2000, 4000};
@@ -198,10 +225,30 @@ static void talk_to_core0(uint32_t ms) {
     }
 }
 
+/* The OLED: the menu's rows in 7 x 13 from the top, then its status line at the bottom (core/ui.h). */
+static void draw_oled(uint32_t dirty) {
+    unsigned main_rows = oled_height == 32u ? 2u : 4u;
+    oled_font_t status_font = oled_height == 32u ? OLED_FONT_4X6 : OLED_FONT_5X8;
+    for (unsigned row = 0; row <= main_rows; row++) {
+        if (!(dirty & (1u << row))) continue;
+        bool inverse = ui.screen.attr[row] == UI_ATTR_CURSOR;
+        if (row < main_rows) {
+            oled_text(row * oled_font_height(OLED_FONT_7X13B), OLED_FONT_7X13B, ui.screen.text[row], inverse);
+        } else {
+            oled_text(oled_height - oled_font_height(status_font), status_font, ui.screen.text[row], inverse);
+        }
+    }
+    (void)oled_flush(); /* a write not acknowledged is counted (oled_errors, on the s key) */
+}
+
 static void draw(void) {
     uint32_t dirty = ui.screen.dirty;
     if (!dirty) return;
     ui_drawn(&ui);
+    if (on_oled) {
+        draw_oled(dirty);
+        return;
+    }
     for (unsigned row = 0; row < UI_ROWS; row++) {
         if (!(dirty & (1u << row))) continue;
         unsigned a = ui.screen.attr[row];
@@ -210,19 +257,42 @@ static void draw(void) {
     tft_wait();
 }
 
-static void core1_main(void) {
+static void oled_layout(void) {
+    if (oled_height == 64u) oled_rule(oled_height - oled_font_height(OLED_FONT_5X8) - 2u); /* a blank row between */
+    ui_set_layout(&ui, oled_height == 32u ? UI_LAYOUT_OLED_32 : UI_LAYOUT_OLED_64);
+}
+
+/* The OLED if display-type allows one and one answers; else the TFT. */
+static void display_init(void) {
+    config_display_t want = settings->display;
+    if (want != CONFIG_DISPLAY_TFT) {
+        uint8_t addr;
+        oled_height = want == CONFIG_DISPLAY_OLED_128X32 ? 32u : 64u;
+        on_oled = oled_init(oled_height, settings->display_rotate, &addr, &oled_hz);
+        if (on_oled) {
+            printf("UI: display OLED 128x%u at %02X, I2C %lu kHz\n", oled_height, addr,
+                   (unsigned long)(oled_hz / 1000u));
+            return;
+        }
+        if (want != CONFIG_DISPLAY_AUTO) printf("UI: no OLED answers at 3C or 3D: using the TFT\n");
+    }
     controller = tft_init(&tft_hz);
     printf("UI: display %s, %lu kHz\n",
            controller == TFT_ILI9341  ? "ILI9341"
            : controller == TFT_ST7789 ? "ST7789"
                                       : "not answering (driven as an ILI9341)",
            (unsigned long)(tft_hz / 1000u));
+}
+
+static void core1_main(void) {
+    display_init();
     uint32_t ms = now_ms();
     ui_init(&ui, mailbox_list(), ms);
+    if (on_oled) oled_layout();
     ui_set_options(&ui, settings->show_commands);
     knob_init();
     draw();
-    tft_backlight(100);
+    if (!on_oled) tft_backlight(100);
     uint32_t last_tick = ms;
     for (;;) {
         while (ring_tail != ring_head) {

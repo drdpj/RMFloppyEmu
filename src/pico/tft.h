@@ -59,8 +59,10 @@ tft_controller_t tft_init(uint32_t *clock_hz);
 /* Backlight brightness, 0-100. */
 void tft_backlight(unsigned percent);
 
-/* Draws one row of text at pixel row y: up to 40 characters (the rest of the row in bg), fg on bg. Returns as soon
- * as the row is on its way: the next call (or tft_wait) waits for it. */
+#define TFT_ELLIPSIS '\x03' /* drawn as "..." in one cell (core/ui.h's UI_ELLIPSIS) */
+
+/* Draws one row of text at pixel row y: up to 40 characters (the rest of the row in bg), fg on bg; TFT_ELLIPSIS as
+ * an ellipsis. Returns as soon as the row is on its way: the next call (or tft_wait) waits for it. */
 void tft_text_row(unsigned y, const char *text, uint16_t fg, uint16_t bg);
 
 /* Waits until everything drawn has reached the display. */

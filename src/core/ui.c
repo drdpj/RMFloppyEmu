@@ -18,9 +18,10 @@
 
 /*
  * The menu: see ui.h. Every change of state redraws the whole screen into ui_screen_t, and only rows whose text or
- * attribute changed are marked dirty, so the platform redraws just those.
+ * attribute changed are marked dirty, so the platform redraws just those. Each row is cut to the width it has on the
+ * display, so the screen holds only what is shown.
  *
- * Layout (rows of 40 characters):
+ * The TFT's layout (rows of 40 characters):
  *   home:     0 title; 2-5 drive A (path over two rows, its kind, its light); 6-9 drive B; 10 the last command
  *             (show-commands); 11 a card or ROM warning; 13 a message; 14 help.
  *   choosing: 0 title; 1 the folder; 2-12 the list (a marker column, a space, 38 columns of name); 13 a
@@ -41,6 +42,8 @@
 #define ROW_HELP          14u
 #define PATH_COLS         (UI_COLS - 3u) /* home: after "A: " */
 #define ITEM_COLS         (UI_COLS - 2u) /* choosing: after the marker and a space */
+#define OLED_STATUS_64    21u            /* 5 x 8 characters */
+#define OLED_STATUS_32    32u            /* 4 x 6 */
 
 typedef enum {
     ITEM_EJECT,
@@ -48,12 +51,55 @@ typedef enum {
     ITEM_ENTRY,
 } item_kind_t;
 
+/* ---- the layouts ------------------------------------------------------------------------------------------- */
+
+static bool oled(const ui_t *u) {
+    return u->layout != UI_LAYOUT_TFT;
+}
+
+/* OLED: the rows in the large font; the status line is the row after them. */
+static unsigned oled_rows(const ui_t *u) {
+    return u->layout == UI_LAYOUT_OLED_32 ? 2u : 4u;
+}
+
+static unsigned status_cols(const ui_t *u) {
+    return u->layout == UI_LAYOUT_OLED_32 ? OLED_STATUS_32 : OLED_STATUS_64;
+}
+
+/* How many characters of a row are shown. */
+static unsigned row_cols(const ui_t *u, unsigned row) {
+    if (!oled(u)) return UI_COLS;
+    if (row < oled_rows(u)) return UI_OLED_COLS;
+    return row == oled_rows(u) ? status_cols(u) : 0u;
+}
+
+static unsigned list_first_row(const ui_t *u) {
+    switch (u->layout) {
+        case UI_LAYOUT_TFT:
+            return UI_LIST_FIRST_ROW;
+        case UI_LAYOUT_OLED_64:
+            return 1u; /* under the title */
+        case UI_LAYOUT_OLED_32:
+            return 0u;
+    }
+    return 0u;
+}
+
+static unsigned list_rows(const ui_t *u) {
+    return oled(u) ? oled_rows(u) - list_first_row(u) : UI_LIST_ROWS;
+}
+
+/* The columns of a list entry's name: after the marker and a space. */
+static size_t item_cols(const ui_t *u) {
+    return oled(u) ? UI_OLED_COLS - 2u : ITEM_COLS;
+}
+
 /* ---- the screen -------------------------------------------------------------------------------------------- */
 
 static void set_row(ui_t *u, unsigned row, ui_attr_t attr, const char *text) {
     char line[UI_COLS + 1];
     size_t n = strlen(text);
-    if (n > UI_COLS) n = UI_COLS;
+    if (n > row_cols(u, row)) n = row_cols(u, row);
     memcpy(line, text, n);
     memset(line + n, ' ', UI_COLS - n);
     line[UI_COLS] = '\0';
@@ -74,7 +120,8 @@ static void set_rowf(ui_t *u, unsigned row, ui_attr_t attr, const char *fmt, ...
     set_row(u, row, attr, line);
 }
 
-/* `width` characters of `name` from `from`, into out; a name that doesn't fit (and isn't scrolled) ends in "~". */
+/* `width` characters of `name` from `from`, into out; a name that doesn't fit (and isn't scrolled) ends in
+ * UI_ELLIPSIS. */
 static void fit(char *out, const char *name, size_t width, size_t from) {
     size_t n = strlen(name);
     if (from > n) from = n;
@@ -82,7 +129,7 @@ static void fit(char *out, const char *name, size_t width, size_t from) {
     if (take > width) take = width;
     memcpy(out, name + from, take);
     out[take] = '\0';
-    if (from == 0 && n > width) out[width - 1] = '~';
+    if (from == 0 && n > width) out[width - 1] = UI_ELLIPSIS;
 }
 
 /* ---- home -------------------------------------------------------------------------------------------------- */
@@ -135,7 +182,7 @@ static void draw_home(ui_t *u) {
     for (unsigned d = 0; d < IDC_PHYS_DRIVES; d++) {
         const ui_drive_t *dr = &u->unit.drive[d];
         unsigned row = ROW_HOME_DRIVE(d);
-        ui_attr_t attr = d == u->home_cursor ? UI_ATTR_CURSOR : UI_ATTR_NORMAL;
+        ui_attr_t attr = d == u->home_cursor && u->cursor_shown ? UI_ATTR_CURSOR : UI_ATTR_NORMAL;
         char first[PATH_COLS + 1], second[PATH_COLS + 1];
         if (!dr->present) {
             strcpy(first, "(empty)");
@@ -203,17 +250,21 @@ static char marker(const ui_t *u, unsigned entry) {
     return ' ';
 }
 
-/* How far the name under the cursor has scrolled. */
-static size_t scroll_offset(const ui_t *u, size_t len) {
-    if (len <= ITEM_COLS) return 0;
-    size_t max = len - ITEM_COLS;
+/* How far text of len characters, in width columns, has scrolled since `since`: a pause at each end, once, and then
+ * back to the start to stay. */
+static size_t scroll_offset(const ui_t *u, size_t len, size_t width, uint32_t since) {
+    if (len <= width) return 0;
+    size_t max = len - width;
     uint32_t cycle = 2u * UI_SCROLL_PAUSE_MS + (uint32_t)max * UI_SCROLL_STEP_MS;
-    uint32_t t = (u->now - u->scroll_since) % cycle;
+    uint32_t t = u->now - since;
+    if (t >= cycle) return 0;
     if (t < UI_SCROLL_PAUSE_MS) return 0;
     t -= UI_SCROLL_PAUSE_MS;
     size_t steps = t / UI_SCROLL_STEP_MS;
     return steps < max ? steps : max;
 }
+
+static void draw_list(ui_t *u);
 
 static void draw_choose(ui_t *u) {
     set_rowf(u, 0, UI_ATTR_TITLE, " Drive %c: choose an image", 'A' + (int)u->drive);
@@ -227,9 +278,15 @@ static void draw_choose(ui_t *u) {
     strcpy(folder + 2, tail);
     set_row(u, 1, UI_ATTR_FAINT, folder);
 
+    draw_list(u);
+    set_row(u, ROW_HELP, UI_ATTR_FAINT, " Press: choose. Hold: back");
+}
+
+/* The list's rows, in either layout: a marker column, a space, and the name. */
+static void draw_list(ui_t *u) {
     unsigned n = item_count(u);
-    for (unsigned k = 0; k < UI_LIST_ROWS; k++) {
-        unsigned row = UI_LIST_FIRST_ROW + k, i = u->top + k;
+    for (unsigned k = 0; k < list_rows(u); k++) {
+        unsigned row = list_first_row(u) + k, i = u->top + k;
         if (i >= n) {
             if (i == n && !u->listed) {
                 set_row(u, row, u->list_failed ? UI_ATTR_WARN : UI_ATTR_FAINT,
@@ -258,15 +315,146 @@ static void draw_choose(ui_t *u) {
                 break;
         }
         bool at = i == u->cursor;
-        fit(shown, text, ITEM_COLS, at ? scroll_offset(u, strlen(text)) : 0);
+        fit(shown, text, item_cols(u), at ? scroll_offset(u, strlen(text), item_cols(u), u->scroll_since) : 0);
         set_rowf(u, row, at ? UI_ATTR_CURSOR : UI_ATTR_NORMAL, "%c %s", mark, shown);
     }
-    set_row(u, ROW_HELP, UI_ATTR_FAINT, " Press: choose. Hold: back");
+}
+
+/* ---- the OLED's layouts (ui.h) ------------------------------------------------------------------------------ */
+
+/* A row that scrolls when it is too long: `width` characters of text, from where it has got to since `since`. */
+static void set_row_scrolled(ui_t *u, unsigned row, ui_attr_t attr, const char *text, size_t width, uint32_t since) {
+    size_t len = strlen(text), from = scroll_offset(u, len, width, since);
+    set_row(u, row, attr, text + (from < len ? from : len));
+}
+
+/* Each drive's light: "A read T12  B idle", made shorter until it fits. */
+static void oled_lights(const ui_t *u, char *out, size_t cap) {
+    char drive[IDC_PHYS_DRIVES][16];
+    for (unsigned brief = 0; brief < 2u; brief++) {
+        for (unsigned d = 0; d < IDC_PHYS_DRIVES; d++) {
+            bool w = u->act.drive_writing[d];
+            const char *what = !lit(u, d) ? "idle" : brief ? (w ? "wr" : "rd") : (w ? "write" : "read");
+            if (lit(u, d) && u->act.drive_has_track[d]) {
+                snprintf(drive[d], sizeof drive[d], "%c %s T%u", 'A' + (int)d, what, u->act.drive_track[d]);
+            } else {
+                snprintf(drive[d], sizeof drive[d], "%c %s", 'A' + (int)d, what);
+            }
+        }
+        snprintf(out, cap, "%s  %s", drive[0], drive[1]);
+        if (strlen(out) <= status_cols(u)) return;
+        snprintf(out, cap, "%s %s", drive[0], drive[1]);
+        if (strlen(out) <= status_cols(u)) return;
+    }
+}
+
+/* The last command (show-commands): "02 read A/1 T12 R5", without its name if that doesn't fit. */
+static void oled_command(const ui_t *u, char *out, size_t cap) {
+    const idc_activity_t *a = &u->shown;
+    char where[24] = "";
+    if (a->has_drive && a->has_track) {
+        snprintf(where, sizeof where, " %c/%u T%u %c%u", 'A' + a->drive, a->side, a->track, third_letter(a->cmd),
+                 a->third);
+    } else if (a->has_drive) {
+        snprintf(where, sizeof where, " %c/%u", 'A' + a->drive, a->side);
+    }
+    snprintf(out, cap, "%02X %s%s", a->cmd, idc_command_name(a->cmd), where);
+    if (strlen(out) > status_cols(u)) snprintf(out, cap, "%02X%s", a->cmd, where);
+}
+
+static void oled_home(ui_t *u) {
+    bool tall = u->layout == UI_LAYOUT_OLED_64;
+    size_t width = tall ? UI_OLED_COLS - 1u : UI_OLED_COLS - 3u; /* after " ", or after "A* " */
+    for (unsigned d = 0; d < IDC_PHYS_DRIVES; d++) {
+        const ui_drive_t *dr = &u->unit.drive[d];
+        bool at = d == u->home_cursor;
+        ui_attr_t attr = at && u->cursor_shown ? UI_ATTR_CURSOR : UI_ATTR_NORMAL;
+        const char *path = dr->present ? dr->path : "(empty)";
+        char shown[UI_OLED_COLS + 1];
+        fit(shown, path, width, at && u->cursor_shown ? scroll_offset(u, strlen(path), width, u->scroll_since) : 0);
+        char dot = lit(u, d) ? UI_DOT_LIT : UI_DOT_OUT;
+        if (tall) {
+            set_rowf(u, 2u * d, attr, "%c: %c", 'A' + (int)d, dot);
+            set_rowf(u, 2u * d + 1u, attr, " %s", shown);
+        } else {
+            set_rowf(u, d, attr, "%c%c %s", 'A' + (int)d, dot, shown);
+        }
+    }
+}
+
+static void oled_choose(ui_t *u) {
+    if (u->layout == UI_LAYOUT_OLED_64) set_rowf(u, 0, UI_ATTR_TITLE, "Image for %c:", 'A' + (int)u->drive);
+    draw_list(u);
+}
+
+/* While choosing, with nothing else to say: the folder, cut from the left if it must be, and where the cursor is. */
+static void oled_where(const ui_t *u, char *out, size_t cap) {
+    char pos[24] = "", start[8];
+    if (u->listed && item_count(u)) snprintf(pos, sizeof pos, "%u of %u", u->cursor + 1u, item_count(u));
+    snprintf(start, sizeof start, u->layout == UI_LAYOUT_OLED_32 ? "%c: /" : "/", 'A' + (int)u->drive);
+    size_t cols = status_cols(u), used = strlen(pos) + (pos[0] ? 1u : 0u) + strlen(start);
+    /* at most "514 of 514" (DIRLIST_MAX_ENTRIES and the two specials) after "A: /": room for 6 at least */
+    size_t room = used + 2u < cols ? cols - used : 2u;
+    const char *folder = u->folder;
+    size_t fl = strlen(folder);
+    char shown[CONFIG_PATH_MAX + 1];
+    if (fl > room) { /* its end, after a "~" */
+        snprintf(shown, sizeof shown, "~%s", folder + fl - (room - 1u));
+    } else {
+        snprintf(shown, sizeof shown, "%s", folder);
+    }
+    snprintf(out, cap, "%s%s%*s", start, shown, (int)(cols - strlen(start) - strlen(shown)), pos);
+}
+
+static void oled_status(ui_t *u) {
+    unsigned row = oled_rows(u);
+    char text[CONFIG_PATH_MAX + 32];
+    if (u->message[0]) {
+        set_row_scrolled(u, row, u->message_warn ? UI_ATTR_WARN : UI_ATTR_FAINT, u->message, status_cols(u),
+                         u->message_since);
+    } else if (u->mode == UI_CHOOSE) {
+        if (u->listed && u->list->truncated) {
+            set_row(u, row, UI_ATTR_WARN, "Too many to list");
+        } else {
+            oled_where(u, text, sizeof text);
+            set_row(u, row, UI_ATTR_FAINT, text);
+        }
+    } else if (!u->unit.card) {
+        set_row(u, row, UI_ATTR_WARN, "No SD card");
+    } else if (!u->unit.rom) {
+        set_row(u, row, UI_ATTR_WARN, "No IDC ROM");
+    } else if (u->show_commands && u->shown_number) {
+        oled_command(u, text, sizeof text);
+        set_row(u, row, UI_ATTR_FAINT, text);
+    } else {
+        oled_lights(u, text, sizeof text);
+        set_row(u, row, UI_ATTR_FAINT, text);
+    }
+}
+
+static void draw_oled(ui_t *u) {
+    for (unsigned row = 0; row < oled_rows(u); row++)
+        set_row(u, row, UI_ATTR_NORMAL, ""); /* what the mode leaves alone */
+    switch (u->mode) {
+        case UI_HOME:
+            oled_home(u);
+            break;
+        case UI_CHOOSE:
+            oled_choose(u);
+            break;
+    }
+    oled_status(u);
+    for (unsigned row = oled_rows(u) + 1u; row < UI_ROWS; row++)
+        set_row(u, row, UI_ATTR_NORMAL, "");
 }
 
 /* ---- both -------------------------------------------------------------------------------------------------- */
 
 static void draw(ui_t *u) {
+    if (oled(u)) {
+        draw_oled(u);
+        return;
+    }
     switch (u->mode) {
         case UI_HOME:
             draw_home(u);
@@ -321,6 +509,17 @@ static void open_folder(ui_t *u, const char *folder, const char *select) {
 
 static void go_home(ui_t *u) {
     u->mode = UI_HOME;
+    u->scroll_since = u->now; /* the drive just chosen for shows its cursor, and on the OLED its path scrolls once */
+    u->cursor_shown = true;
+}
+
+/* Home hides its cursor until the knob is used: the first turn or press only shows it. True if this event was
+ * that one. */
+static bool wakes_cursor(ui_t *u) {
+    if (u->cursor_shown) return false;
+    u->cursor_shown = true;
+    u->scroll_since = u->now;
+    return true;
 }
 
 static void start_choosing(ui_t *u, unsigned drive) {
@@ -387,7 +586,7 @@ static void move_cursor(ui_t *u, int by) {
     if (by < 0 && u->cursor > 0) u->cursor--;
     if (by > 0 && u->cursor + 1 < n) u->cursor++;
     if (u->cursor < u->top) u->top = u->cursor;
-    if (u->cursor >= u->top + UI_LIST_ROWS) u->top = u->cursor - UI_LIST_ROWS + 1;
+    if (u->cursor >= u->top + list_rows(u)) u->top = u->cursor - list_rows(u) + 1;
     u->scroll_since = u->now;
 }
 
@@ -399,8 +598,20 @@ void ui_init(ui_t *u, dirlist_t *list, uint32_t now_ms) {
     u->list = list;
     u->now = now_ms;
     u->last_input = now_ms;
+    u->scroll_since = now_ms;
     for (unsigned row = 0; row < UI_ROWS; row++)
         u->screen.attr[row] = 0xFF; /* nothing drawn yet: every row is dirty */
+    draw(u);
+}
+
+void ui_set_layout(ui_t *u, ui_layout_t layout) {
+    RMFE_ASSERT(u);
+    u->layout = layout;
+    for (unsigned row = 0; row < UI_ROWS; row++) {
+        u->screen.text[row][0] = '\0'; /* not a padded row: drawn again whatever it holds */
+        u->screen.attr[row] = 0xFF;
+    }
+    if (u->cursor >= u->top + list_rows(u)) u->top = u->cursor - list_rows(u) + 1;
     draw(u);
 }
 
@@ -439,12 +650,15 @@ void ui_event(ui_t *u, rotary_event_t e, uint32_t now_ms) {
     u->last_input = now_ms;
     switch (u->mode) {
         case UI_HOME:
+            if (wakes_cursor(u)) break;
             switch (e) {
                 case ROTARY_CW:
                     if (u->home_cursor + 1 < IDC_PHYS_DRIVES) u->home_cursor++;
+                    u->scroll_since = now_ms; /* the OLED scrolls the picked drive's path once */
                     break;
                 case ROTARY_CCW:
                     if (u->home_cursor > 0) u->home_cursor--;
+                    u->scroll_since = now_ms;
                     break;
                 case ROTARY_PRESS:
                     start_choosing(u, u->home_cursor);
@@ -476,7 +690,11 @@ void ui_event(ui_t *u, rotary_event_t e, uint32_t now_ms) {
 void ui_tick(ui_t *u, uint32_t now_ms) {
     RMFE_ASSERT(u);
     u->now = now_ms;
-    if (u->mode == UI_CHOOSE && now_ms - u->last_input >= UI_IDLE_MS) go_home(u);
+    if (u->mode == UI_CHOOSE && now_ms - u->last_input >= UI_IDLE_MS) {
+        go_home(u);
+        u->cursor_shown = false; /* not chosen: left */
+    }
+    if (u->mode == UI_HOME && now_ms - u->last_input >= UI_CURSOR_MS) u->cursor_shown = false;
     if (u->message[0] && !busy(u) && now_ms - u->message_since >= UI_MESSAGE_MS) u->message[0] = '\0';
     draw(u);
 }
@@ -501,7 +719,7 @@ static void listed(ui_t *u) {
             break;
         }
     }
-    if (u->cursor >= u->top + UI_LIST_ROWS) u->top = u->cursor - UI_LIST_ROWS + 1;
+    if (u->cursor >= u->top + list_rows(u)) u->top = u->cursor - list_rows(u) + 1;
 }
 
 void ui_request_done(ui_t *u, bool ok, const char *message, uint32_t now_ms) {

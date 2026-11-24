@@ -21,7 +21,8 @@
  * core 1 touches the 480Z's link or the SD card, so drawing never holds up the link (src/pico/main.c).
  *
  * The console can work the menu too, for tests and for using it without a knob: + and - turn, p presses, l is a
- * long press. c turns show-commands on or off until the next start. r redraws the whole screen; d prints it ("SCREEN
+ * long press. c turns show-commands on or off until the next start, and h switches an OLED between 128 x 64 and
+ * 128 x 32 until then. r redraws the whole screen; d prints it ("SCREEN
  * <row> <attribute>|<text>|"); s reports the peak stacks, the longest menu step on core 0 and the display's clock. k
  * prints the link's last exchanges (src/pico/link_uart.h). w is a test hook: each press adds more time to every save on
  * the card (0, 250, 500, 1000, 2000, 4000 ms, then 0 again), as a slow card would.

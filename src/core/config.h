@@ -48,6 +48,7 @@
  *       The rate the link goes fast to (command 00). 125000 is the IDC's; the 480Z takes the rate from the unit's
  *       reply (core/link.h), so 62500 works too, for an RS-232 interface that can't drive the 480Z at 125000.
  *   boot-baud = 125000 | 62500                (default 125000)
+ *   display-type = auto | tft | oled-128x64 | oled-128x32, an OLED optionally with -rotate   (default auto)
  *       The same, for the 480Z's ROS loading the boot block (core/link.h, link_set_boot_baud). 125000 is the
  *       IDC's; the block goes paced, two bytes per DTR pulse (link_set_paced). 62500 is a fallback.
  *
@@ -78,6 +79,15 @@ typedef enum {
     CONFIG_ROTARY_QUARTER,
 } config_rotary_t;
 
+/* The display (FlashFloppy's display-type, with our TFT added and its LCDs left out). Auto: an OLED if one answers on
+ * I2C, taken as 128 x 64 (FlashFloppy's auto takes 128 x 32), otherwise the TFT. */
+typedef enum {
+    CONFIG_DISPLAY_AUTO = 0,
+    CONFIG_DISPLAY_TFT,
+    CONFIG_DISPLAY_OLED_128X64,
+    CONFIG_DISPLAY_OLED_128X32,
+} config_display_t;
+
 typedef struct {
     config_startup_t image_on_startup;
     bool write_protect;
@@ -88,6 +98,8 @@ typedef struct {
     bool show_commands;
     uint32_t fast_baud; /* LINK_BAUD_FAST or LINK_BAUD_HALF */
     uint32_t boot_baud; /* the same, for the ROS's boot block */
+    config_display_t display;
+    bool display_rotate; /* an OLED turned 180 degrees */
 } config_t;
 
 /* Told of each line of RMFE.CFG that is ignored: its number (from 1) and why. */

@@ -282,6 +282,10 @@ void tft_backlight(unsigned percent) {
 
 /* ---- text ---------------------------------------------------------------------------------------------------- */
 
+/* TFT_ELLIPSIS, which the font hasn't got: three dots on the row "A" stands on. */
+#define ELLIPSIS_ROW  10u
+#define ELLIPSIS_BITS 0x92u
+
 void tft_text_row(unsigned y, const char *text, uint16_t fg, uint16_t bg) {
     uint16_t *px = line[next_line];
     next_line ^= 1u;
@@ -293,8 +297,11 @@ void tft_text_row(unsigned y, const char *text, uint16_t fg, uint16_t bg) {
         for (unsigned c = 0; c < cols; c++) {
             char ch = c < len ? text[c] : ' ';
             uint8_t g = 0;
-            if (gr < FONT_8X13_HEIGHT && ch >= FONT_8X13_FIRST && ch <= FONT_8X13_LAST)
+            if (gr < FONT_8X13_HEIGHT && ch >= FONT_8X13_FIRST && ch <= FONT_8X13_LAST) {
                 g = font_8x13_glyphs[ch - FONT_8X13_FIRST][gr];
+            } else if (ch == TFT_ELLIPSIS && gr == ELLIPSIS_ROW) {
+                g = ELLIPSIS_BITS;
+            }
             for (unsigned b = 0; b < FONT_8X13_WIDTH; b++)
                 *out++ = (g & (0x80u >> b)) ? fg : bg;
         }

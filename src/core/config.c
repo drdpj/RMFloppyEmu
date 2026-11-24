@@ -88,6 +88,8 @@ void config_defaults(config_t *c) {
     c->show_commands = false;
     c->fast_baud = LINK_BAUD_FAST;
     c->boot_baud = LINK_BAUD_FAST; /* the IDC's; the boot block goes paced (core/link.h, link_set_paced) */
+    c->display = CONFIG_DISPLAY_AUTO;
+    c->display_rotate = false;
 }
 
 static void warn_line(config_warn_fn warn, void *ctx, unsigned line, const char *why) {
@@ -122,6 +124,29 @@ static bool parse_rotary(span_t v, config_rotary_t *kind, bool *reverse) {
         *kind = CONFIG_ROTARY_HALF;
     } else if (is(k, "quarter")) {
         *kind = CONFIG_ROTARY_QUARTER;
+    } else {
+        return false;
+    }
+    return true;
+}
+
+/* "auto", "tft", "oled-128x64" or "oled-128x32", an OLED optionally followed by "-rotate" (FlashFloppy's
+ * display-type, which has more suffixes, and LCDs). */
+static bool parse_display(span_t v, config_display_t *kind, bool *rotate) {
+    static const char suffix[] = "-rotate";
+    const size_t sn = sizeof suffix - 1u;
+    *rotate = v.n > sn && is((span_t){v.p + v.n - sn, sn}, suffix);
+    span_t k = {v.p, *rotate ? v.n - sn : v.n};
+    if (is(k, "oled-128x64")) {
+        *kind = CONFIG_DISPLAY_OLED_128X64;
+    } else if (is(k, "oled-128x32")) {
+        *kind = CONFIG_DISPLAY_OLED_128X32;
+    } else if (*rotate) {
+        return false; /* only an OLED turns round */
+    } else if (is(k, "auto")) {
+        *kind = CONFIG_DISPLAY_AUTO;
+    } else if (is(k, "tft")) {
+        *kind = CONFIG_DISPLAY_TFT;
     } else {
         return false;
     }
@@ -179,6 +204,14 @@ static const char *parse_option(config_t *c, span_t key, span_t v) {
         } else {
             return "boot-baud must be 62500 or 125000";
         }
+    } else if (is(key, "display-type")) {
+        config_display_t kind;
+        bool rotate;
+        if (!parse_display(v, &kind, &rotate)) {
+            return "display-type must be auto, tft, oled-128x64 or oled-128x32 (an OLED optionally with -rotate)";
+        }
+        c->display = kind;
+        c->display_rotate = rotate;
     } else if (is(key, "rotary")) {
         config_rotary_t kind;
         bool reverse;

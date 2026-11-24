@@ -27,6 +27,7 @@ as wired below, is B changing before A.
   driver keeps ST7789 possible. The module also has an SD slot on its own pins and an XPT2046 touch controller
   (`T_` pins). **Neither is used** (owner, 2026-11-21): the card is on a separate breakout, and the knob is the
   only input. Their pins stay unconnected; the touch controller's own chip select keeps it off the bus anyway.
+  Or instead, a small I2C OLED, 128 x 64 or 128 x 32 (below, "An OLED instead of the TFT").
 - **Backlight:** the module switches its own. Its `LED` pin goes through a 1 kΩ resistor (R6) to the base of an
   S8050 (Q1, marked `J3Y`), which switches the LEDs' cathodes through 10 Ω (R5). The anodes are fed from the
   module's 3.3 V regulator [MSP2807 schematic]. So GP22 drives `LED` directly, with PWM for brightness. It sources
@@ -158,7 +159,7 @@ and 38).
 | GP25 | (on board) | on-board LED |
 | GP26 | 31 | rotary encoder push switch |
 
-Free: GP10, GP11 (14, 15), GP27, GP28 (32, 34). GP27/GP28 were for the touch controller, which isn't used. The SWD
+Free: GP10, GP11 (14, 15), GP27, GP28 (32, 34). GP10/GP11 are I2C1's SDA and SCL, for an OLED (below). GP27/GP28 were for the touch controller, which isn't used. The SWD
 pins are on the Pico 2's own debug header, so no GPIOs go to debugging.
 
 Checked against the RP2350 datasheet's function table (2026-11-21): GP12–15 are SPI1 RX, CSn, SCK and TX, and
@@ -191,6 +192,26 @@ own 3.3 V regulator.
 Leave the module's `J1` open: it bypasses the module's regulator, for a 3.3 V supply only. Keep the SPI1 wires short
 (under 15 cm) and together, with the GND wire alongside them.
 
+### An OLED instead of the TFT
+
+A small 4-pin I2C OLED can be the display instead of the TFT (`src/pico/oled.c`; `display-type` in
+`docs/sd-card.md`): an SSD1306, 128 x 64 (0.96") or 128 x 32 (0.91"). Both kinds tried answered at 0x3C and took
+the I2C bus at 1 MHz, which the firmware uses (`tests/hil/oled_probe.c`, `docs/testing.md`, "The OLED"); a full
+frame takes 12 ms. They go on I2C1, the free GP10/GP11, so nothing else moves, and can be wired alongside the TFT:
+with `display-type = auto` the OLED is used when one answers. The two sizes can't be told apart over I2C, so a
+128 x 32 needs `display-type = oled-128x32`. Plug in one at a time: both usually answer at 0x3C. The 128 x 32's
+picture fills only the top half of its glass: that is the panel, not a fault.
+
+| From | To | Pico 2 pin | GPIO |
+|---|---|---|---|
+| OLED `VCC` | 3V3(OUT) | 36 | |
+| OLED `GND` | GND | 13 | |
+| OLED `SDA` | | 14 | GP10 (I2C1 SDA) |
+| OLED `SCL` (`SCK` on some) | | 15 | GP11 (I2C1 SCL) |
+
+The modules have their own pull-ups on SDA and SCL (to their `VCC`, so 3.3 V here) and take 3.3 V or 5 V; from 3.3 V
+the bus can't go above it. Unplug the probe's USB before changing modules.
+
 ## Power
 
 During development the probe's VBUS powers the target through a Schottky diode into VSYS. The TFT module takes 3.3 V
@@ -210,6 +231,8 @@ module's regulator. The backlight is four LEDs in parallel from 3.3 V through 10
   16-pixel row at a time with the misc-fixed 8x13 font (`src/pico/font_8x13.c`), from two line buffers, one sent
   by DMA while the next is drawn: no frame buffer. At start-up it identifies the controller and picks the fastest
   clock (37.5 MHz down to 12.5) at which 16 full-width strips, window commands and all, read back intact.
+  Or `src/pico/oled.c`: an SSD1306 OLED on I2C1 at 1 MHz, with a 1 KB frame buffer of which only the changed
+  8-row pages are sent; misc-fixed 7x13 bold for the menu's rows, 5x8 or 4x6 for its status line.
 - **Encoder:** `src/core/rotary.c` decodes the quadrature and debounces the switch (tested on the PC); on core 1,
   GPIO interrupts on both edges of A, B and the switch note the pins' levels, so no state is missed while a row is
   drawn. GPIO interrupts rather than PIO: the knob changes a few hundred times a second at most, and core 1 has

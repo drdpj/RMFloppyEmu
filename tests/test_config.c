@@ -217,6 +217,40 @@ static void test_boot_baud_rejects_other_rates_and_keeps_the_last(void) {
     TEST_ASSERT_EQUAL_UINT(3, warn_line[1]);
 }
 
+static void test_display_type_is_auto_by_default(void) {
+    TEST_ASSERT_EQUAL(CONFIG_DISPLAY_AUTO, c.display);
+    TEST_ASSERT_FALSE(c.display_rotate);
+}
+
+static void test_display_type_takes_each_kind_and_an_oled_turned_round(void) {
+    parse("display-type = tft\n");
+    TEST_ASSERT_EQUAL(CONFIG_DISPLAY_TFT, c.display);
+    parse("display-type = oled-128x32\n");
+    TEST_ASSERT_EQUAL(CONFIG_DISPLAY_OLED_128X32, c.display);
+    TEST_ASSERT_FALSE(c.display_rotate);
+    parse("Display-Type = OLED-128x64-Rotate\n");
+    TEST_ASSERT_EQUAL(CONFIG_DISPLAY_OLED_128X64, c.display);
+    TEST_ASSERT_TRUE(c.display_rotate);
+    parse("display-type = auto\n");
+    TEST_ASSERT_EQUAL(CONFIG_DISPLAY_AUTO, c.display);
+    TEST_ASSERT_FALSE(c.display_rotate);
+    TEST_ASSERT_EQUAL_UINT(0, nwarn);
+}
+
+/* Only an OLED turns round; FlashFloppy's LCDs and other suffixes aren't ours. */
+static void test_display_type_rejects_the_rest_and_keeps_the_last(void) {
+    parse("display-type = oled-128x32-rotate\ndisplay-type = tft-rotate\ndisplay-type = lcd-16x02\n"
+          "display-type = oled-128x64-narrow\ndisplay-type = -rotate\n");
+    TEST_ASSERT_EQUAL(CONFIG_DISPLAY_OLED_128X32, c.display);
+    TEST_ASSERT_TRUE(c.display_rotate);
+    TEST_ASSERT_EQUAL_UINT(4, nwarn);
+    TEST_ASSERT_EQUAL_STRING("display-type must be auto, tft, oled-128x64 or oled-128x32 (an OLED optionally with "
+                             "-rotate)",
+                             warn_why[0]);
+    TEST_ASSERT_EQUAL_UINT(2, warn_line[0]);
+    TEST_ASSERT_EQUAL_UINT(5, warn_line[3]);
+}
+
 static void test_rotary_is_full_and_forward_by_default(void) {
     TEST_ASSERT_EQUAL(CONFIG_ROTARY_FULL, c.rotary);
     TEST_ASSERT_FALSE(c.rotary_reverse);
@@ -323,6 +357,9 @@ int main(void) {
     RUN_TEST(test_fast_baud_rejects_other_rates_and_keeps_the_last);
     RUN_TEST(test_boot_baud_is_125000_by_default_and_takes_62500);
     RUN_TEST(test_boot_baud_rejects_other_rates_and_keeps_the_last);
+    RUN_TEST(test_display_type_is_auto_by_default);
+    RUN_TEST(test_display_type_takes_each_kind_and_an_oled_turned_round);
+    RUN_TEST(test_display_type_rejects_the_rest_and_keeps_the_last);
     RUN_TEST(test_rotary_is_full_and_forward_by_default);
     RUN_TEST(test_rotary_takes_each_kind_with_or_without_reverse);
     RUN_TEST(test_rotary_refuses_other_kinds_and_suffixes_and_keeps_its_setting);

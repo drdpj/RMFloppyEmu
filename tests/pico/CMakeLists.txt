@@ -100,6 +100,23 @@ pico_enable_stdio_uart(hil_firmware 1)
 pico_enable_stdio_usb(hil_firmware 0)
 pico_add_extra_outputs(hil_firmware)
 
+# OLED bring-up (tests/hil/oled_probe.c, run by tests/hil/run_oled_probe.py): a 128 x 64 or 128 x 32 SSD1306 or
+# SH1106 on I2C1: the bus scan, the I2C clocks it takes, and a test screen whose settings can be changed by console.
+set(RMFE_OLED_FONTS ${RMFE_ROOT}/src/pico/font_4x6.c ${RMFE_ROOT}/src/pico/font_5x8.c ${RMFE_ROOT}/src/pico/font_6x12.c
+                    ${RMFE_ROOT}/src/pico/font_7x13b.c ${RMFE_ROOT}/src/pico/font_8x13b.c
+                    ${RMFE_ROOT}/src/pico/font_9x15b.c ${RMFE_ROOT}/src/pico/font_10x20.c)
+set(RMFE_OLED_PROBE_SOURCES ${RMFE_ROOT}/tests/hil/oled_probe.c ${RMFE_OLED_FONTS}
+                            ${RMFE_ROOT}/src/pico/fault.c ${RMFE_ROOT}/src/pico/assert_hook.c)
+add_executable(oled_probe ${RMFE_OLED_PROBE_SOURCES})
+set_source_files_properties(${RMFE_ROOT}/tests/hil/oled_probe.c ${RMFE_OLED_FONTS}
+                            PROPERTIES COMPILE_OPTIONS "${RMFE_WARNINGS};-Werror")
+target_include_directories(oled_probe PRIVATE ${RMFE_ROOT}/src)
+target_compile_definitions(oled_probe PRIVATE PICO_STACK_SIZE=0x1000 PICO_USE_STACK_GUARDS=1)
+target_link_libraries(oled_probe rmfe_core pico_stdlib hardware_i2c)
+pico_enable_stdio_uart(oled_probe 1)
+pico_enable_stdio_usb(oled_probe 0)
+pico_add_extra_outputs(oled_probe)
+
 include(${RMFE_ROOT}/cmake/fatfs_sd.cmake)
 rmfe_add_fatfs_sd_library()
 

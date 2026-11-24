@@ -136,9 +136,14 @@ lower SWD speeds (1 MHz, 100 kHz), `flash write_image` without `program`, and co
 between two identical flash commands 13 minutes apart. Later the same day, with the same wiring, probe and commands,
 nothing has failed: 39 of 39 flashes of the unit's firmware, of the firmware from before the boot block's pacing,
 and of every test module, including five straight after the 480Z had booted over the link. So it isn't the firmware
-or the method, and the cause is still unknown. If it happens again, load with picotool through BOOTSEL (unplug both
-USB cables, hold BOOTSEL while plugging in the Pico 2's USB, then plug in the probe; the firmware has no USB stdio,
-so each load needs BOOTSEL again), and note what the bench was doing just before.
+or the method, and the cause is still unknown. It came back once the same day, out of about 45 flashes: "Failed
+to write memory at 0x20013028" (OpenOCD's bounce buffer, in SRAM), flashing the unit's firmware over
+`test_link_uart` just after it had run; the next try worked. Earlier it had also failed over `test_bytes` after
+its run, though the first failure of all was over the unit's own firmware, so a test module that has finished is a
+lead, not the cause. Try again first; if it sticks, load with
+picotool through BOOTSEL (unplug both USB cables, hold BOOTSEL while plugging in the Pico 2's USB, then plug in the
+probe; the firmware has no USB stdio, so each load needs BOOTSEL again), and note what the bench was doing just
+before.
 
 ## 3. MAME comparison tests (level 2)
 
@@ -297,6 +302,28 @@ is bring-up firmware, separate from the device's. The script flashes it and chec
 
 It ends with what to check by eye: the text reads the right way round, the eight colour bars are in order and
 named, the corner marker, and the brightness following the knob.
+
+### The OLED
+
+```
+ninja -C build-pico-tests                                   # builds oled_probe.elf too
+timeout 120 tests/hil/run_oled_probe.py build-pico-tests [--keys KEYS] [--console CONSOLE_PORT] [--log FILE]
+timeout 30 tests/hil/run_oled_probe.py --no-flash --keys KEYS  # change the settings of the probe running
+```
+
+Wiring in `docs/hardware.md`, "An OLED instead of the TFT". `oled_probe.elf` (`tests/hil/oled_probe.c`) is bring-up
+firmware for a 128 x 64 or 128 x 32 I2C OLED, SSD1306 or SH1106. The script flashes it and checks, from the console:
+
+- something answers at 0x3C or 0x3D (it lists every address on the bus, with the status byte each returns);
+- the set-up and a test screen were acknowledged;
+- at least one I2C clock (100, 400 and 1000 kHz are tried) writes 50 full frames without a NAK, with the time a
+  frame takes at each. The probe uses the fastest.
+
+The panel's memory can't be read back over I2C, so whether the bytes arrived intact is for the eye. The test screen
+has a one-pixel border round the panel and text rows naming the settings. Keys sent with `--keys` change one setting
+each and redraw: `h` height 64/32, `m` SSD1306/SH1106 (the SH1106 shows its 132 columns from column 2), `f` turned
+180 degrees, `c` contrast, `i` inverse, `k` the clock, `s` scan again. A border missing on one side, or noise down
+one edge, means the wrong controller; a picture squashed or half the panel tall, the wrong height.
 
 ### MAME in the loop
 

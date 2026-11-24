@@ -55,7 +55,8 @@ the track, while the 480Z uses that drive and for a moment after, like a real dr
 `show-commands = yes` it also shows each command as the unit serves it: its byte and name, the drive and side,
 the track, and the record (`R`), sector ID (`S`) or sector count (`N`), with a count of the commands so far, such
 as `02 read  A/0 T12 R5  #1234`. The knob picks a drive (turn) and opens a list of images for it (press),
-starting in the folder of the image it holds. In the list:
+starting in the folder of the image it holds. The cursor is hidden until the knob is used: the first turn or press
+only shows it, on the drive it was last on, and it hides again after 10 seconds without the knob. In the list:
 
 - turn to move, and press to open a folder or choose an image;
 - `../` goes up a folder, and `(eject)` empties the drive;
@@ -63,7 +64,16 @@ starting in the folder of the image it holds. In the list:
 - a long press (about a second), or half a minute without touching the knob, goes back.
 
 Folders come first, then images, each sorted by name ignoring case (FlashFloppy's `sort-priority = folders`), and
-up to 512 entries a folder are shown. A name too long for the screen scrolls while the cursor is on it.
+up to 512 entries a folder are shown. A name too long for the screen ends in "…"; when the cursor comes to it, it
+scrolls once to its end and back, then stays.
+
+**On an OLED** (`display-type`, below; wiring in `docs/hardware.md`) the same menu is smaller. On a 128 x 64 panel:
+"A:" with a dot over the image's path, and the same for B, then a status line at the bottom. On a 128 x 32: a row
+for each drive, "A", its dot and the path, and the status line under them. A drive's dot fills while the 480Z uses
+it, as the light. The status line says what is happening: each drive's light (`A read T12  B idle`), or with
+`show-commands = yes` the last command (`02 read A/0 T12 R5`), a missing card or ROM, or a message; while choosing,
+the folder and where the cursor is (`/GAMES  3 of 12`). The list shows three entries at a time (two on a 128 x 32),
+and the cursor is shown in inverse.
 
 **What the 480Z sees.** A new image goes in at once, between two of the 480Z's commands, never during one. The next
 command finds the new disc, as if it had been changed in an instant; an emptied drive answers "not ready" (`80`),
@@ -98,6 +108,8 @@ show-commands = no
 fast-baud = 125000
 # boot-baud: 125000 | 62500
 boot-baud = 125000
+# display-type: auto | tft | oled-128x64 | oled-128x32, an OLED optionally followed by -rotate
+display-type = auto
 ```
 
 A `#` starts a comment only at the beginning of a line, because a path may contain one.
@@ -111,6 +123,7 @@ A `#` starts a comment only at the beginning of a line, because a path may conta
 | `show-commands` | `yes`, `no` | `no` | `yes`: the display also shows each command as the unit serves it (above) |
 | `fast-baud` | `125000`, `62500` | `125000` | the rate the link goes fast to. `125000` is the IDC's. The 480Z takes the rate from the unit's reply to `00` (`docs/protocol.md`, "Framing and baud rate"), so `62500` works too, at about half the transfer speed, for an RS-232 interface that can't manage 125000. The level-3 and MAME-in-the-loop tests need `125000` |
 | `boot-baud` | `125000`, `62500` | `125000` | the same, only for the 480Z's ROS loading the boot block (the `00` before `FF`, which the unit tells by its parity: `docs/protocol.md`). `125000` is the IDC's, and MAME in the loop needs it. The block goes two bytes per DTR pulse, as the ROS takes it, so it takes about 0.9 s at either rate. `62500` is a fallback: before the unit paced the block, a real 480Z's ROS lost a byte of it at 125000 |
+| `display-type` | `auto`, `tft`, `oled-128x64`, `oled-128x32`; an OLED type optionally followed by `-rotate` | `auto` | the display, as FlashFloppy's option (which also has LCDs and more suffixes). `auto`: an OLED if one answers on I2C (at `0x3C` or `0x3D`), taken as 128 x 64, otherwise the TFT; FlashFloppy's `auto` takes an OLED as 128 x 32, so a 128 x 32 panel needs `oled-128x32`. `-rotate` turns an OLED's picture round 180 degrees. If an OLED is asked for and none answers, the TFT is used |
 | `rotary` | `full`, `half`, `quarter`, each optionally followed by `,reverse` | `full` | the knob, as FlashFloppy's option: one step per detent of an encoder with as many detents as pulses (an EC11; `full`), or per half or quarter of a pulse. `,reverse` turns it round, for an encoder that steps the wrong way |
 
 ## Writes

@@ -39,6 +39,10 @@ set(RMFE_PICO_SOURCES
     src/pico/sd_hw_config.c
     src/pico/sd_store.c
     src/pico/font_8x13.c
+    src/pico/font_7x13b.c
+    src/pico/font_5x8.c
+    src/pico/font_4x6.c
+    src/pico/oled.c
     src/pico/mailbox.c
     src/pico/menu_host.c
     src/pico/panel.c
@@ -52,7 +56,7 @@ target_include_directories(rmfloppyemu PRIVATE src)
 # The SDK's sources are compiled inside this target, so the strict warnings go on our files only.
 set_source_files_properties(${RMFE_PICO_SOURCES} PROPERTIES COMPILE_OPTIONS "${RMFE_WARNINGS};-Werror")
 target_link_libraries(rmfloppyemu rmfe_core rmfe_fatfs_sd pico_stdlib pico_multicore hardware_spi hardware_dma
-                      hardware_pwm)
+                      hardware_pwm hardware_i2c)
 
 # Core 0's stack: the whole 4 KB of SCRATCH_Y (nothing else uses it), with the Cortex-M33's hardware stack
 # limit at its bottom, so an overflow faults at once (src/pico/fault.c) rather than overwriting core 1's
