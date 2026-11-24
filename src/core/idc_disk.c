@@ -49,7 +49,7 @@ static bool ready(const idc_t *d, unsigned phys) {
     return d->drives && phys < IDC_PHYS_DRIVES && d->drives->present(d->drives->ctx, phys);
 }
 
-/* Whether a drive is 80-track: its type setting (the IDC's links), or else the image's cylinder count. */
+/* Whether a drive is 80-track: its type setting (the IDC's stepping test), or else the image's cylinder count. */
 static bool qd_drive(idc_t *d, unsigned phys) {
     switch (d->drive_type[phys]) {
         case IDC_DRIVE_40_TRACK:

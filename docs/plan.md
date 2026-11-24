@@ -27,14 +27,14 @@ The approach is a C reimplementation of the disk unit's command set, with a stag
   formatting and new tracks). `disk_hfe` reads through `src/flux`, and writes by re-encoding the track with
   `flux/ibm_encode` and writing it in place (v1; v3 is read-only). Checked on the real discs; an HFE fully rewritten
   by this code reads back at 730/730 in HxC and Greaseweazle.
-- **Milestone 4** (commands): started. `0A` upload is implemented exactly. `0B` is reported to the platform and
-  answered `40`: no Z80 unless real software needs it (`docs/protocol.md`, "Implementation decision"). The drive byte
-  and the record mapping are decoded. `01` log in, `02` read, `03`/`04` write and `08` flush are done
-  (`src/core/idc_disk.c`): one cached track per drive, written back on flush or a track change, duplicate IDs
-  chosen by rotational position. The platform supplies the discs through `idc_drives_t`. `idc_t` holds the two
-  track caches and the upload RAM (19,556 bytes on the RP2350), so the firmware keeps it in static storage. `06`, `0C`, `0D`, `0E`, `0F` and `10` are
-  done too. Every command is implemented except `09` (not decoded, never seen) and the aux-port commands; see
-  `docs/protocol.md`, "Implementation status".
+- **Milestone 4** (commands): done, but for `09` and the aux-port commands (below). `0A` upload is implemented exactly.
+  `0B` is reported to the platform and answered `40`: no Z80 unless real software needs it (`docs/protocol.md`,
+  "Implementation decision"). The drive byte and the record mapping are decoded. `01` log in, `02` read, `03`/`04` write
+  and `08` flush are done (`src/core/idc_disk.c`): one cached track per drive, written back on flush or a track change,
+  duplicate IDs chosen by rotational position. The platform supplies the discs through `idc_drives_t`. `idc_t` holds the
+  two track caches and the upload RAM (19,556 bytes on the RP2350), so the firmware keeps it in static storage. `06`,
+  `0C`, `0D`, `0E`, `0F` and `10` are done too. Every command is implemented except `09` (not decoded, never seen) and
+  the aux-port commands; see `docs/protocol.md`, "Implementation status".
 - **Milestone 5** (MAME comparison): done (2026-11-20). `tests/mame/`: scenarios, `make_traces.py` (reference traces
   from MAME), `mamecmp` (replays them into `src/core` and compares every byte) and `compare.py` (also compares the
   discs left behind). The CP/M boot, read, write, disc-full, no-disc and write-protect scenarios match MAME byte for
@@ -51,9 +51,9 @@ The approach is a C reimplementation of the disk unit's command set, with a stag
   has its own index, so the 4MATION loaders meet the same copy of sector 08 as in MAME. None of the utilities uses
   `0A`/`0B`. `0C` places sectors from the IDC's own track templates. An IDC bug that sends quad-density
   FORMAT's first track to the wrong physical track is documented and deliberately not reproduced (`format_qd`
-  declares it). Left open: how the IDC learns the drive type (its stepping test or board links). **Next:
+  declares it). How the IDC learns the drive type was settled later: a stepping test (`docs/protocol.md`). **Next:
   milestone 6**, the Pico platform.
-- **Milestone 6** (Pico platform): started (2026-11-21).
+- **Milestone 6** (Pico platform): done (2026-11-21; the OLED 2026-11-24).
   - Step 1 is done: the unit tests run on the Pico 2 (`tests/pico/`, `docs/testing.md` section 2). There is one
     firmware per module, flashed and read back through the probe. 129 of the 137 tests pass there. The other 8 need
     `testdata/`, and are listed by name rather than run. The fixtures of `test_idc_disk`, `test_scp`, `test_flux_pll`
@@ -68,7 +68,7 @@ The approach is a C reimplementation of the disk unit's command set, with a stag
       at its bottom (`PICO_USE_STACK_GUARDS`). An overflow faults at once. `src/pico/fault.c` then reports it on the
       console and halts with the LED flashing, as `RMFE_ASSERT` does. This was checked on the Pico with SP forced
       to the limit (CFSR `00100000`, STKOF). `idc_t` and the image state stay static. The firmware's real peak
-      stack is still to be measured once FatFs and the display are in.
+      stack, measured once FatFs, the display and the menu were in, is under 2.2 KB on each core (below).
     - The command-layer tests take milliseconds there. The flux tests take longer, but the firmware doesn't run
       them: `test_flux_pll` takes 1.6 s, `test_ibm_track` 1.2 s and `test_scp` 0.5 s, against 19, 17 and 7 ms on
       the PC (`-O3`, no sanitizers).
@@ -115,7 +115,7 @@ The approach is a C reimplementation of the disk unit's command set, with a stag
     - Found: the 480Z paces the unit with DTR, and the unit must stop within about a byte. Through USB the Pico
       learns too late, so the MAME device does the IDC's DTR gating itself (`docs/protocol.md`, "Flow control").
       In MAME the 480Z tolerates two bytes beyond the IDC's; the Pico sends at most one.
-  - Step 5, the display and encoder: started (2026-11-21). The pin plan was checked against the RP2350's function
+  - Step 5, the display and encoder: done (2026-11-21). The pin plan was checked against the RP2350's function
     table and the module's schematic, and corrected (`docs/hardware.md`): the module switches its own backlight
     (an S8050 behind a 1 kΩ resistor), so GP22 drives `LED` directly and no transistor is needed; `VCC` comes from
     VSYS, because VBUS is dead with the Pico's own USB unplugged; touch and the module's SD slot aren't used, which
@@ -156,8 +156,16 @@ The approach is a C reimplementation of the disk unit's command set, with a stag
         slow write (`docs/protocol.md`, "Flow control"), so an image's whole rewrite (at most about 2.5 s) is
         tolerated; `format`'s long waits are the formatting itself, as without the menu (90% 111 ms, max 273 ms);
         and `tools/imd/make_blank.py` makes blank discs that format in place (`docs/sd-card.md`).
-    - **Next:** test on the real 480Z (`docs/acceptance.md`), and milestone 7, the transceiver.
-- **Milestone 7** (interface hardware): started (2026-11-22).
+  - Step 6, a small OLED instead of the TFT: working (2026-11-24). An SSD1306, 128 x 64 or 128 x 32, on I2C1 (the
+    free GP10/GP11) at 1 MHz (`src/pico/oled.c`; `docs/hardware.md`, "An OLED instead of the TFT"), chosen by
+    `display-type` in `RMFE.CFG` (FlashFloppy's option; `auto` takes an OLED when one answers). The menu
+    (`core/ui.c`) has an OLED layout for each size beside the TFT's, from mock-ups the owner chose on the real
+    panels in the bring-up firmware (`tests/hil/oled_probe.c`): rows in misc-fixed 7x13 bold, a status line of
+    what is happening (5x8, or 4x6 on the 128 x 32), and a dot per drive that fills as its light. On both displays
+    since then: a name cut short ends in an ellipsis, a long name scrolls once when the cursor comes to it, and the
+    home cursor is hidden until the knob is used. The real 480Z booted Flowers of Crystal with the OLED.
+- **Milestone 7** (interface hardware): working on a breadboard (2026-11-22 to 24). The real 480Z boots CP/M, all at
+  125000, and passes `docs/acceptance.md` but for the production cable; the board and its cable are still to come.
   - Two MAX3232 modules on the link pins, an 8-pin DIN socket wired the MD1's way, and RM's own disc unit lead,
     which is a symmetric null modem (1–5, 2–7, 3–8, 4–4; `docs/hardware.md`, "Wiring two MAX3232 modules").
   - On the real 480Z (ROS 1.2), at 125000 the boot block went out whole and correctly paced by DTR, but the 480Z lost
@@ -190,11 +198,11 @@ The approach is a C reimplementation of the disk unit's command set, with a stag
     changes surviving a power cycle, power removed during a write (on a PC: a clean filesystem, and every changed
     sector only `E5` or whole new records, so nothing half-written), a 480Z reset in mid-transfer, and three
     whole-disc copies with verify. What remains of `docs/acceptance.md` is its Setup section.
-  - New: `fast-baud = 125000 | 62500` (default 125000, the IDC's) and `boot-baud = 125000 | 62500` (default
-    62500 at first; 125000 since the boot block is paced, below) in `RMFE.CFG` (`docs/sd-card.md`, `core/link.h`), unit-tested in `test_link`, `test_config` and
-    `test_idc`. The send side now starts a byte only with the transmitter idle and DTR asserted,
-    as the IDC's SIO does; before, the byte waiting in the FIFO could go out after DTR dropped (it wasn't the cause
-    here, but it was one byte beyond the IDC). The console's `k` key prints the link's last exchanges: bytes each
+  - New: `fast-baud = 125000 | 62500` (default 125000, the IDC's) and `boot-baud = 125000 | 62500` (default 62500 at
+    first; 125000 since the boot block is paced, below) in `RMFE.CFG` (`docs/sd-card.md`, `core/link.h`), unit-tested in
+    `test_link`, `test_config` and `test_idc`. The send side now starts a byte only with the transmitter idle and DTR
+    asserted, as the IDC's SIO does; before, the byte waiting in the FIFO could go out after DTR dropped (it wasn't the
+    cause here, but it was one byte beyond the IDC). The console's `k` key prints the link's last exchanges: bytes each
     way, bad parity, waits for DTR and how each ended, which is what found the problem.
   - The FT232R harness is gone (the link pins go through the transceivers), so level 3 (`run_hil.py`,
     `run_hil_sd.py`) and MAME in the loop (`run_mame_linked.py`) can't run on this set-up; the real 480Z stands in.
@@ -211,8 +219,9 @@ The approach is a C reimplementation of the disk unit's command set, with a stag
 
 ## Decided (2026-11-20)
 
-- **Images live on an SD card**, IMD and HFE. They are chosen per drive (two drives: A:/C: and B:/D:, a CP/M drive per side) on the 2.8" TFT with
-  a rotary encoder. **Both formats are writable, safely.** See `docs/hardware.md`.
+- **Images live on an SD card**, IMD and HFE. They are chosen per drive (two drives: A:/C: and B:/D:, a CP/M drive per
+  side) on the 2.8" TFT with a rotary encoder (or, since 2026-11-24, a small OLED). **Both formats are writable,
+  safely.** See `docs/hardware.md`.
 
 ## Decisions still to make
 

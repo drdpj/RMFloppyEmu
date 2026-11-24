@@ -1,8 +1,9 @@
 # Hardware
 
-Status (2026-11-22): in development. Two MAX3232 modules drive the link, and the real 480Z boots CP/M through them
-and runs at 125000, with the ROS's boot block at 62500 ("Wiring two MAX3232 modules"); a USB serial adapter on the link pins was the stand-in
-before (`docs/testing.md`, level 3). The SD card is a separate micro-SD breakout on SPI0, not the TFT module's slot.
+Status (2026-11-24): working on a breadboard, the board still to come. Two MAX3232 modules drive the link, and the
+real 480Z boots CP/M through them and runs everything at 125000, the ROS's boot block included ("Wiring two MAX3232
+modules"; `docs/acceptance.md`); a USB serial adapter on the link pins was the stand-in before (`docs/testing.md`,
+level 3). The display is the 2.8" TFT or a small I2C OLED ("An OLED instead of the TFT"). The SD card is a separate micro-SD breakout on SPI0, not the TFT module's slot.
 The SD card's SPI clock is 15 MHz: with a level-shifting breakout on jumper wires, 25 MHz failed to mount and
 18.75 MHz worked (`src/pico/sd_hw_config.c`). The TFT is an ILI9341 (its ID4 reads `00 93 41`). On
 jumper wires its SPI1 writes were clean at 37.5 MHz and below, and garbled at 75 MHz (67 of 100 strips, window
@@ -121,8 +122,9 @@ usually fitted with 0.1 µF for 3.3 V.
 **At 125000** (real 480Z, ROS 1.2, 2026-11-23), two inexpensive MAX3232 modules run CP/M at full speed, from VSYS
 and from 3V3 alike. From 3V3, `PIP B:=A:*.*[V]` copied the whole system disc to a blank image in B and verified it,
 with no errors: 162 KB to the unit and 387 KB back in one exchange, at 125000, with no parity errors or resets.
-Only the ROS's loading of the boot block fails there, which is not the transceivers (`docs/protocol.md`, "Framing
-and baud rate"), so the unit loads it at 62500 (`boot-baud`, `docs/sd-card.md`). Measured on the way: with the
+The ROS's loading of the boot block failed there at first, which was not the transceivers: the ROS's receive
+interrupt runs late just after `FF`, and the unit overran its SIO. The unit now sends the block two bytes per DTR
+pulse, and the 480Z loads it at 125000 (2026-11-24; `docs/protocol.md`, "Framing and baud rate"). Measured on the way: with the
 modules' own capacitors V+ was +8.5 V but V− only −4.2 V; 910 nF ceramics across C1–C4 brought V− to −8.0 V. At
 the 480Z's socket the data line then rose in 0.76 us and fell in 1.2 us, swinging about +8.7 V to −6 V; a lone bit
 was within 0.5 us of its 8 us.

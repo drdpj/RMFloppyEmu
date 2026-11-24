@@ -84,8 +84,8 @@ modules powered at 3.3 V (or one MAX3243); the wiring is in `docs/hardware.md`.
   10 us of idle between bytes, and an 8N2 boot block. `boot-baud` (`docs/sd-card.md`) is now 125000 by default;
   62500 is kept as a fallback.
 - **The boot block is checked.** The ROS adds every byte after `FF` (load addresses, counts and data) into a 16-bit
-  sum and compares it with the two bytes at the end; a mismatch, or no byte for about 145 ms, is "Disc Error"
-  [480Z ROS 1.2 1f1e-1f4c, 078e].
+  sum and compares it with the two bytes at the end; a mismatch, or no byte for about 144 ms (256 polls), is
+  "Disc Error" [480Z ROS 1.2 1f1e-1f4c, 078e; "Open questions", "The 480Z side"].
 - The framing stays 8E1 at both speeds. Only the CTC divider changes [IDC3; the no-parity 2-stop table at 012D is used
   only by command `12`, for channel A].
 - Parity is checked. When receiving a 128-byte block, a parity error makes the unit ask for a resend
@@ -127,14 +127,15 @@ modules powered at 3.3 V (or one MAX3243); the wiring is in `docs/hardware.md`.
     it never drops, for a 480Z that holds DTR up [`src/pico/link_uart.c`]. Each DTR pulse then gets two bytes,
     and the boot block takes 0.92 s, as the ROS's pace sets it. The IDC isn't paced. It gets by because it starts
     its first byte about 73 us after `FF` and leaves 2-9 us between bytes.
-  - **Timeouts:** the ROS gives up about 145 ms after the last byte it received (144 and 145 ms, in the boot
-    block and waiting for `FF`'s answer), pulses RTS and shows "Disc Error". Replies up to 186 ms later were
-    tolerated after `0C` (FORMAT), so the wait depends on the command. The real unit through USB answers in
-    0.9 ms median, 5.8 ms at worst (MAME's time), so there is a wide margin.
+  - **Timeouts:** only the ROS has one, while it loads the boot block: about 144 ms for each byte (144.2 ms on
+    ROS 1.2D, 144–145 ms on ROS 2.2B, in MAME), after which it pulses RTS and shows "Disc Error". Once the boot
+    block is in, its disc driver waits for each byte without limit, so the 480Z tolerates any delay in a command's
+    answer ("Open questions", "The 480Z side"). The real unit through USB answers in 0.9 ms median, 5.8 ms at
+    worst (MAME's time), well inside the boot's 144 ms.
   - **A slow unit** (`run_mame_linked.py --save-delay`, every save on the card made slower, 2026-11-21): the 480Z
     waited 4.15 s for FORMAT's `0C` and 2 s for CP/M's writes, with no reset beyond the ones MAME's own unit gets.
-    So the 145 ms limit applies to the exchanges it was measured in (the boot block, `FF`), not to the answer to a
-    write or a format, and a card that takes a few seconds to rewrite an image is tolerated.
+    That fits the boot block's driver having no timeout (above), so a card that takes a few seconds to rewrite an
+    image is tolerated.
   - Through the link the 480Z sent two bytes with bad parity: its first `00` after power-up and its first `FF`
     after going fast, each the first byte after it reprograms its baud rate (it may be MAME's emulation; the
     IDC takes a command byte whatever its parity, so either way it does no harm).
@@ -331,7 +332,7 @@ The guide's ROS command `X` loads CP/M from the right-hand drive and exchanges t
 C:, and the left-hand drive B: and D:. That is presumably the drive map (`05`, and the 8-entry table at FEA4)
 swapped in pairs, but `X` hasn't been traced. A one-drive 480Z uses A: and B: for the same side of whichever disc is in, and C: and D: for the other: its
 firmware asks for the disc to be changed and swaps the names [same pages].
-The drive types themselves (40 or 80 tracks) come from links on the IDC board (owner).
+The drive types themselves (40 or 80 tracks) the IDC finds by stepping the head at login ("Open questions").
 
 ### Disk geometry: the CP/M 2.2F system disk [image, trace]
 
@@ -511,9 +512,16 @@ Whether the 480Z ever sends with RTS down is an open question.
       so far"). `03` is used (SYSGEN, FASTCOPY); `07`, `09` and `10` are not.
 - [ ] **Does anything use `0A`/`0B` (code executed inside the unit)?** Not CP/M, the 4MATION loaders, or any of RM's
       utilities above. Still to check: other software, other protected titles.
-- [ ] **The IDC finds the drive type itself:** at login it steps out up to 44 times and, if track 0 isn't reached,
-      sets IY+1 bit 4 and IY+5 = 50h (80 tracks) [IDC3 0261–0297]. This disagrees with the recollection that it comes
-      from board links (below); maybe both exist. Confirm on the real unit.
+- [x] **How the IDC finds each drive's type** (40 or 80 tracks): **by stepping the head**, each time a disc is
+      logged in. It steps in 45 times, then out 44; if the drive's track-0 sensor isn't on at the end (WD1793
+      status bit 2), the drive has more than 44 tracks, and it is marked 80-track: IY+1 bit 4, IY+5 = 50h
+      [IDC3 0255–0297; IDC5 the same, stepping out 49]. The ROM reads no links for it: port 04 is read once, its
+      bit 0, before a drive is selected [IDC3 05ef], which is not a type. (The owner's recollection of links on the
+      board isn't borne out by IDC 3.1's ROM, 2026-11-24.) Our device has no head to step, so the type is a setting
+      that stands in for the test's result (`drive-a`, `drive-b`): by default it follows the image, 43 cylinders or
+      more making an 80-track drive. The 480Z sees the type only in `06`'s answer and the track limit, so it gets
+      the same answer as from a real IDC with that drive. Command `09` returns the IDC's drive table, still not
+      decoded; nothing traced uses it ("Command table").
 - [x] **Switching a drive from double to quad density sends the next seek to the wrong track (an IDC bug; we
       don't reproduce it).** Decided by the owner, 2026-11-21. It leaves stale data; it doesn't break discs.
       - *What happens:* in MAME's quad-density FORMAT (2026-11-21), drive B had last been used in double density
@@ -545,30 +553,40 @@ Whether the 480Z ever sends with RTS down is an open question.
         (`differs B 0 0 02-10`). The link bytes and the rest of the disc match MAME's, so our quad-density disc
         is otherwise exactly what MAME's FORMAT leaves. Still worth a check on the real unit: format
         a used DD disc as QD, then read cylinder 0 side 0.
-- [x] **Where the IDC gets each drive's type** (40- or 80-track): from **hardware links on the IDC board** (owner,
-      2026-11-20), presumably read through drive status port 04 (MAME returns FF). Our device takes the type from the
-      disc image, with a per-drive setting standing in for the links (empty slots, blank images, or behaving as a
-      DD-only unit). Command `09` returns the IDC's drive table, which still needs decoding.
 - [x] Dragon World / Flowers of Crystal looping in MAME: solved. The images lack the second sector 08 on cylinder 2
       (see "Copy-protected discs"); the repaired images boot.
-- [ ] Where on the original track the second sector 08 sits, and the exact interleave. It only matters if the timing
-      of a real drive with our emulated rotation fails to reach both copies. Verify on real hardware.
-- [ ] Why the Dragon World HFE is reported to load from a Gotek. The old HFEs here were synthesised from the
-      incomplete IMDs and lack the second sector 08, so they don't load from this unit either (owner, 2026-11-21).
-      **HFEs made from the rebuilt flux load and run** (owner, 2026-11-21, on the Pico): `gw convert --tracks
-      c=0-39:h=0-1 …_rebuilt_300rpm.scp …_rebuilt.hfe::bitrate=250` (Greaseweazle). They hold both 08s and both
-      29s, and match the IMDs rebuilt from the same captures in all 734 sectors (`tests/check_hfe_vs_imd.py`). Still
-      open: compare the Gotek's file with ours (md5 above).
+- [x] Where on the original track the second sector 08 sits, and the exact interleave. It only mattered if a real
+      480Z's loader, against our emulated rotation, failed to reach both copies. It doesn't: on the real 480Z
+      (2026-11-23) Flowers of Crystal booted from the repaired IMD, and Dragon World from its IMD and from the HFE
+      rebuilt from its flux capture (`docs/acceptance.md`). The exact position on the original disc is still
+      unknown, and no longer needed.
+- [x] Why the Dragon World HFE is reported to load from a Gotek. Dropped (owner, 2026-11-24): the HFEs rebuilt
+      from the flux captures hold both sector 08s and both 29s, match the rebuilt IMDs in all 734 sectors
+      (`tests/check_hfe_vs_imd.py`), and load and run, in MAME and on the real 480Z
+      (`gw convert --tracks c=0-39:h=0-1 …_rebuilt_300rpm.scp …_rebuilt.hfe::bitrate=250`, Greaseweazle). The old
+      HFEs here, synthesised from the incomplete IMDs, lack the second 08 and don't load.
 - [x] How logical track numbers map to cylinder and side: the track byte is the cylinder, and the side is bit 0 of the
       drive byte, each side being a CP/M drive of its own (A:/C:, B:/D:; "The drive byte" above, from the user guide
       and the traces, 2026-11-21).
-- [ ] The structure of the boot block: `00 E0` looks like a load address of E000, followed by `95 00`.
-- [ ] The 480Z side (`FV20_*.ROM`): how it sequences RTS and CTS, and its timeouts. Partly answered in MAME
-      (2026-11-21, "Flow control"): RTS rests asserted with a 10 us pulse as the reset, DTR paces the unit two
-      bytes at a time during the boot block, and the ROS gives up about 145 ms after the last byte. It never sent
-      with RTS down in any scenario. A slow unit (`--save-delay`) showed it waits at least 4 s for `0C`'s answer
-      and 2 s for a write's. Still open: the timeouts from the ROM itself, for each command, and the same on the
-      real 480Z.
+- [x] **The structure of the boot block** (2026-11-24, from IDC 3.1 and 5.1): records of a load address and a
+      count (two bytes each, low byte first) and that many bytes, ended by a count of 0, then the 16-bit sum the
+      ROS checks ("Framing and baud rate"). IDC 3.1's block is two records: 149 bytes at E000, a start-up stub,
+      and 886 at F800, the 480Z's disc driver (IDC 5.1: 149 and 1018). The ROS jumps to E000. The stub hooks the
+      driver into the ROS: its jump table over the ROS's vectors at FF6B and FECD–FEFF (so ROS service 48, the
+      disc call that the CP/M BIOS makes with IX at a parameter block, goes to the driver), its own receive
+      interrupt in the SIO's vectors (FC14, FC16), and a hook for the ROS's `B` and `X` commands (FF39). The driver
+      takes received bytes into a 256-byte ring at E000, over the stub.
+- [x] **The 480Z side: its timeouts** (2026-11-24, from ROS 1.2D, its CP/M BIOS and IDC 3.1's boot block). Only
+      the ROS has one, and only while it loads the boot block: each byte, from the go-fast reply to the checksum,
+      gets 256 calls of its "is a byte waiting?" service (2F) [ROS 1.2D 3eea–3ef2 for the first, 078e for the
+      rest]. That is **144.2 ms** on ROS 1.2D, measured in MAME's `rm480za` with no unit (`00` sent, then
+      "Disc Error" 144.2 ms later, with no retry); 144–145 ms on ROS 2.2B (`rm480z`). After that the 480Z's disc
+      driver is the boot block's, and it has **no timeout**: it waits for each byte (f816) and for its transmitter
+      (f828) for as long as it takes [IDC3 boot block]. So a slow or silent unit makes CP/M wait, not fail, until
+      the 480Z is reset; MAME's 480Z waited 4.15 s for a slow FORMAT and 2 s for slow writes. Its one timed wait
+      is after a parity error in a record it receives: it discards bytes until 256 polls in a row find none, then
+      sends `FF` for the record again (f8d8). The CP/M BIOS doesn't time the link itself: it goes through
+      service 48. RTS and DTR: "Flow control". Not checked on the real 480Z, whose ROS is the same 1.2D.
 - [x] Image formats and geometries: IMD and HFE (v1 writable, v3 read-only), FM track 0 with DD or QD data tracks,
       40 or 80 cylinders, one or two sides (`docs/sd-card.md`; blank ones from `tools/imd/make_blank.py`).
 - [x] A record written (`03`/`04`) to a sector that isn't on the disc (MAME, 2026-11-21): the IDC takes it into its

@@ -34,8 +34,8 @@
  *   write-protect = yes | no                  (default no)
  *       yes: every image is write-protected; no: an image is write-protected if it has the FAT read-only attribute.
  *   drive-a = auto | 40 | 80, drive-b = ...   (default auto)
- *       The drive's type, which the IDC took from links on its board (core/idc.h, idc_drive_type_t). auto: 80-track
- *       for an image with more than 44 cylinders.
+ *       The drive's type, which the IDC found by stepping the head (core/idc.h, idc_drive_type_t). auto: 80-track
+ *       for an image of 43 cylinders or more.
  *   idc-rom = <path>                          (default IDC.ROM)
  *       The IDC ROM image the boot block (command FF) comes from (docs/hardware.md).
  *   rotary = full | half | quarter [,reverse] (default full)

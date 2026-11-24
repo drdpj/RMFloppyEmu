@@ -8,20 +8,24 @@ from an SD card. There is no flux or drive-timing emulation.
 
 - **Done:** the protocol, decoded from the IDC ROM and MAME traces (`docs/protocol.md`). The command layer, in C,
   says byte for byte what the real IDC firmware says in MAME, for CP/M and RM's utilities (`docs/testing.md`).
-- **Working on development hardware:** the firmware serves the link on a UART at the 480Z's 9600/125000 baud with
-  its handshake lines, and the two drives from IMD and HFE images on an SD card, configured the way
-  [FlashFloppy](https://github.com/keirf/flashfloppy) does it (`docs/sd-card.md`). A 2.8" TFT and a rotary encoder
-  choose each drive's image, show each drive's activity and, optionally, each command. The card can be changed while
-  it runs. Tested through a USB serial adapter playing the 480Z, and with MAME's emulated 480Z, running CP/M and
-  RM's utilities, using the real unit as its disc unit.
-- **To come:** the RS-232 transceivers and cable (`docs/hardware.md`); trial on a real 480Z (`docs/acceptance.md`);
-  a clean-room boot block, so the IDC ROM becomes optional (`docs/plan.md`).
+- **Working on a real 480Z** (on a breadboard): the firmware serves the link on a UART at the 480Z's 9600/125000
+  baud with its handshake lines, through RS-232 transceivers, and the two drives from IMD and HFE images on an SD
+  card, configured the way [FlashFloppy](https://github.com/keirf/flashfloppy) does it (`docs/sd-card.md`). The real
+  480Z boots CP/M and runs everything at 125000, and passes the acceptance checklist (`docs/acceptance.md`): every
+  disc format, FORMAT and VERIFY, PIP with verify, write protection, power cut during a write, and the 4MATION games
+  with their own loaders. A rotary encoder and a display, a 2.8" TFT or a small 128 x 64 or 128 x 32 OLED, choose
+  each drive's image and show each drive's activity and, optionally, each command. The card can be changed while it
+  runs. Also tested through a USB serial adapter playing the 480Z, and with MAME's emulated 480Z using the real unit
+  as its disc unit.
+- **To come:** a board and its cable (`docs/hardware.md`, "For a board"); a clean-room boot block, so the IDC ROM
+  becomes optional (`docs/plan.md`).
 
 ## What you need
 
-- A Pico 2, a micro-SD card breakout (SPI), a 2.8" SPI TFT (ILI9341), an EC11 rotary encoder with a push switch, two
-  MAX3232 RS-232 modules (or one MAX3243), a plug for the 480Z's SIO/4 socket, and a 5 V supply. Wiring, pin plan and
-  parts are in `docs/hardware.md`.
+- A Pico 2, a micro-SD card breakout (SPI), a display, an EC11 rotary encoder with a push switch, two MAX3232 RS-232
+  modules (or one MAX3243), a plug for the 480Z's SIO/4 socket, and a 5 V supply. The display is a 2.8" SPI TFT
+  (ILI9341), or a 4-pin I2C OLED (SSD1306, 128 x 64 or 128 x 32), chosen with `display-type` (`docs/sd-card.md`).
+  Wiring, pin plan and parts are in `docs/hardware.md`.
 - An IDC ROM image from your own disk unit, on the SD card: the 480Z loads its boot block from it. Use **IDC 3.1**
   (`IDC3-1I`), from the double-drive units: this is a double-drive unit, and 3.1 is what MAME's MQ2 runs and what
   the project is tested against. IDC 5.1 (`IDC5-1J`), from the single-drive units, is also recognised. ROM images
@@ -67,7 +71,7 @@ without them.
   real unit
 - [tools/imd/](tools/imd/): blank RM-format images, and repairing protected ones; [tools/hfedump/](tools/hfedump/) and
   [tools/scpdump/](tools/scpdump/): what `src/flux` decodes from HFE and SCP images; [tools/font/](tools/font/): the
-  display's font
+  displays' fonts
 
 ## Licence
 

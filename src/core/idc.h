@@ -76,7 +76,7 @@
 #define IDC_PROBE_MFM      0x02u
 #define IDC_PROBE_96TPI    0x04u /* the disc is 80-track */
 #define IDC_PROBE_QD_DRIVE 0x08u /* the drive is 80-track */
-#define IDC_QD_CYLINDERS   43u   /* an image with more cylinders than this is an 80-track (QD) disc */
+#define IDC_QD_CYLINDERS   43u   /* an image with this many cylinders or more is an 80-track (QD) disc */
 
 /* Disc errors: WD1793 status bits, as the IDC passes them on [IDC3 02c3, 0314] */
 #define IDC_STATUS_NOT_READY     0x80u
@@ -109,9 +109,10 @@ typedef struct {
 } idc_drives_t;
 
 /*
- * What kind of drive each of ours is: in the IDC this comes from links on its board (docs/protocol.md,
- * open questions), and it decides the drive bit of the 06 probe. FOLLOW_IMAGE (the default) makes an image
- * with more than IDC_QD_CYLINDERS cylinders an 80-track drive and anything else a 40-track one. MAME's
+ * What kind of drive each of ours is. The IDC finds out by stepping the head at login [IDC3 0255-0297]; we have
+ * no head to step, so it is a setting, and it decides the drive bit of the 06 probe and the track limit.
+ * FOLLOW_IMAGE (the default) makes an image of IDC_QD_CYLINDERS cylinders or more an 80-track drive and anything
+ * else a 40-track one. MAME's
  * MQ2 has 80-track drives (525qd), so the MAME comparison sets IDC_DRIVE_80_TRACK.
  */
 typedef enum {
@@ -196,7 +197,7 @@ void idc_init(idc_t *d, const link_io_t *io, const uint8_t *boot_block, size_t b
 /* Connects the discs (before idc_run). */
 void idc_set_drives(idc_t *d, const idc_drives_t *drives);
 
-/* Sets a drive's type (the IDC's board links). drive is 0 (A:) or 1 (B:). */
+/* Sets a drive's type (what the IDC's stepping test finds). drive is 0 (A:) or 1 (B:). */
 void idc_set_drive_type(idc_t *d, unsigned drive, idc_drive_type_t type);
 
 /* Writes every changed cached track back (the platform calls this before swapping an image). Returns

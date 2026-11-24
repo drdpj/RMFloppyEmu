@@ -118,7 +118,7 @@ A `#` starts a comment only at the beginning of a line, because a path may conta
 |---|---|---|---|
 | `image-on-startup` | `last`, `static`, `init` | `last` | above |
 | `write-protect` | `yes`, `no` | `no` | `yes`: every image is write-protected. `no`: an image is write-protected if it has the FAT read-only attribute (as FlashFloppy) |
-| `drive-a`, `drive-b` | `auto`, `40`, `80` | `auto` | the drive's type, which a real IDC took from links on its board. `auto`: 80-track for an image with more than 44 cylinders |
+| `drive-a`, `drive-b` | `auto`, `40`, `80` | `auto` | the drive's type, which a real IDC finds by stepping the head when a disc is logged in. `auto`: 80-track for an image of 43 cylinders or more |
 | `idc-rom` | a path | `IDC.ROM` | the IDC ROM image |
 | `show-commands` | `yes`, `no` | `no` | `yes`: the display also shows each command as the unit serves it (above) |
 | `fast-baud` | `125000`, `62500` | `125000` | the rate the link goes fast to. `125000` is the IDC's. The 480Z takes the rate from the unit's reply to `00` (`docs/protocol.md`, "Framing and baud rate"), so `62500` works too, at about half the transfer speed, for an RS-232 interface that can't manage 125000. The level-3 and MAME-in-the-loop tests need `125000` |

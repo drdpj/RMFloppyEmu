@@ -219,7 +219,9 @@ timeout 300 tests/hil/run_hil.py build-pico-tests [--port LINK_PORT] [--console 
 ```
 
 A USB serial adapter plays the 480Z on the link pins, at 3.3 V TTL, before the RS-232 transceiver. The tests were
-developed with an FTDI FT232R, which does 8E1 at exactly 125000. Its handshake pins are active low, like the
+developed with an FTDI FT232R, which does 8E1 at exactly 125000. Since 2026-11-22 the link pins go through the
+transceivers to the real 480Z, so these tests and MAME in the loop need the adapter wired back in place of the
+transceivers' logic side; the real 480Z (`docs/acceptance.md`) stands in for them meanwhile. Its handshake pins are active low, like the
 transceiver's logic side, so the firmware is unchanged:
 
 | FT232R | Pico 2 | 480Z role |
@@ -275,8 +277,8 @@ The test fails at once if the start-up report doesn't show these. It checks:
 The record written to B comes from a random seed, printed with the results (`--seed` repeats a run).
 
 Both scripts print the git hash with the results, and `--log` keeps them. The timings include USB: a record takes 12–23 ms
-from command to last byte, against 11.9 ms on the wire. The 480Z's own timeouts are still an open question
-(`docs/protocol.md`).
+from command to last byte, against 11.9 ms on the wire. The 480Z allows about 144 ms a byte while its ROS loads
+the boot block, and has no timeout after that (`docs/protocol.md`, "The 480Z side").
 
 ### The display and encoder
 
