@@ -181,6 +181,10 @@ The approach is a C reimplementation of the disk unit's command set, with a stag
     images). All at 125000 with no parity errors (`docs/acceptance.md`). Read back on a PC: both formatted images
     (cpmdw for the IMD, `tools/hfedump` for the HFE), and a 24 KB file the 480Z copied with PIP, byte for byte.
     Also: `TYPE` of that file (two extents), and booting with either the unit or the 480Z powered on first.
+  - Every format (2026-11-24): single, double and quad density, each one- and two-sided. On all nine sides the
+    480Z read the files and wrote a verified PIP copy, read back on a PC byte for byte; the unit kept the single
+    density images FM and side 1's head map (H = 0) when saving them. RM's CP/M 2.2F reads single density too,
+    though its banner says "Quad and Double Density".
   - New: `fast-baud = 125000 | 62500` (default 125000, the IDC's) and `boot-baud = 62500 | 125000` (default
     62500) in `RMFE.CFG` (`docs/sd-card.md`, `core/link.h`), unit-tested in `test_link`, `test_config` and
     `test_idc`. The send side now starts a byte only with the transmitter idle and DTR asserted,

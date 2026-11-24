@@ -36,13 +36,17 @@ A failed item blocks the release until it is fixed, or the owner explicitly acce
 
 ## Formats and media
 
-- [ ] Every disk format we support boots or reads (SD, DD, QD; single and double sided), one image of each
+- [x] Every disk format we support boots or reads (SD, DD, QD; single and double sided), one image of each
+      (2026-11-24, at 125000: single, double and quad density, each one- and two-sided, six images. On each side:
+      `DIR`, `STAT`, `TYPE` of a 24 KB file, and a PIP copy with verify, which read back on a PC byte for byte.
+      The DD and QD images were made with `tools/imd/make_blank.py` and cpmdw; the SD ones with cpmdw, whose IMDs
+      were wrongly MFM and were corrected to FM by hand)
 - [x] RM's FORMAT and VERIFY on an IMD and on an HFE in drive B; the formatted image reads back on a PC
       (2026-11-23, at 125000. On a PC: the IMD reads as an empty RM double-density disc in cpmdw; the HFE, decoded
       by `tools/hfedump`, has RM's layout on all 80 tracks, no CRC errors, every sector `E5` but FORMAT's boot
       sector on track 0 of each side)
-- [x] Changing disk images while the 480Z is at `A>` behaves as a disk change does (2026-11-23: no `^C` needed; PIP
-      wrote to a newly chosen image in B straight away)
+- [x] Changing disk images while the 480Z is at `A>` behaves as a disk change does (`^C` logs in the new disk, as
+      RM's documentation says) (2026-11-23; PIP also wrote to a newly chosen image without a `^C`)
 - [ ] No image in a drive gives the same error on the 480Z as an empty real drive
 
 ## Robustness
@@ -59,4 +63,4 @@ A failed item blocks the release until it is fixed, or the owner explicitly acce
 | Date | Firmware | IDC ROM | ROS | Tester | Result / notes |
 |---|---|---|---|---|---|
 | 2026-11-22 | 7f6f741 | IDC3.1 | 1.2 | owner | First run, not a full pass. Breadboard: two MAX3232 modules and RM's own lead. At 125000 the ROS's boot block fails ("Disc Error"). With `fast-baud = 62500`: `B` boots CP/M 2.2F to `A>`, and 4MATION's Flowers of Crystal boots |
-| 2026-11-23 | 998e1f2 (defaults: `boot-baud` 62500, `fast-baud` 125000) | IDC3.1 | 1.2 | owner | The ROS's boot block at 62500 and everything after it at 125000: `B` boots CP/M 2.2F to `A>`, and `DIR` and `TYPE` run at 125000 (with a test build of the same rule). Modules on 3V3: `PIP B:=A:*.*[V]` to a blank image, no errors; swapping images from the knob at `A>`; FORMAT and VERIFY of drive B (an IMD); 4MATION's Flowers of Crystal and Dragon World boot, Dragon World also from its rebuilt HFE; FORMAT and VERIFY of an HFE in B, and both formatted images read back on a PC; a 24 KB PIP copy read back on a PC byte for byte; `X` boots from B; both power-on orders boot; `TYPE` of a 24 KB file; `DIR` on A:, B:, C: and D:; all at 125000 with no parity errors on the link. The rest of the checklist is still to do |
+| 2026-11-23 | 998e1f2 (defaults: `boot-baud` 62500, `fast-baud` 125000) | IDC3.1 | 1.2 | owner | The ROS's boot block at 62500 and everything after it at 125000: `B` boots CP/M 2.2F to `A>`, and `DIR` and `TYPE` run at 125000 (with a test build of the same rule). Modules on 3V3: `PIP B:=A:*.*[V]` to a blank image, no errors; swapping images from the knob at `A>`; FORMAT and VERIFY of drive B (an IMD); 4MATION's Flowers of Crystal and Dragon World boot, Dragon World also from its rebuilt HFE; FORMAT and VERIFY of an HFE in B, and both formatted images read back on a PC; a 24 KB PIP copy read back on a PC byte for byte; `X` boots from B; both power-on orders boot; `TYPE` of a 24 KB file; single, double and quad density, one- and two-sided, read and written (2026-11-24); `DIR` on A:, B:, C: and D:; all at 125000 with no parity errors on the link. The rest of the checklist is still to do |
