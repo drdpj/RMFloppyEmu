@@ -126,6 +126,20 @@ A Pico stuck this way doesn't need a power cycle: the RP2350's rescue reset, thr
 `target/rp2350-rescue.cfg` does it), resets the whole chip and holds it in the boot ROM. With an OpenOCD server
 running: `rp2350.dap apreg 0x80000 0 0x80000000; rp2350.dap apreg 0x80000 0 0`, then flash as usual.
 
+In a one-shot OpenOCD run (`-c init -c halt ...`), every halt warns "target was in unknown state when halt was
+requested". That is harmless: OpenOCD hasn't polled the cores yet, and DHCSR shows the halt takes.
+
+**An unexplained failure, 2026-11-24.** For about half an hour during the real-480Z bring-up, flashing through the
+probe failed whatever was tried: ROM reads at random addresses ("Failed to read memory at 0x00007dxx", "FUNC_FLASH_...
+not found"), failed SRAM accesses, "Failed to invoke rcp_init", and cores that wouldn't examine. The rescue reset,
+lower SWD speeds (1 MHz, 100 kHz), `flash write_image` without `program`, and core 0 alone didn't help. It began
+between two identical flash commands 13 minutes apart. Later the same day, with the same wiring, probe and commands,
+nothing has failed: 39 of 39 flashes of the unit's firmware, of the firmware from before the boot block's pacing,
+and of every test module, including five straight after the 480Z had booted over the link. So it isn't the firmware
+or the method, and the cause is still unknown. If it happens again, load with picotool through BOOTSEL (unplug both
+USB cables, hold BOOTSEL while plugging in the Pico 2's USB, then plug in the probe; the firmware has no USB stdio,
+so each load needs BOOTSEL again), and note what the bench was doing just before.
+
 ## 3. MAME comparison tests (level 2)
 
 MAME's `rm480z` driver runs the real IDC3 firmware on an emulated Z80. It is our reference for what the drive says on
