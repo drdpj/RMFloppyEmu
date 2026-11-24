@@ -144,12 +144,14 @@ static link_status_t cmd_execute(idc_t *d) {
     return link_put(&d->link, IDC_STATUS_UNKNOWN_CMD);
 }
 
+/* Paced for the ROS, which takes it two bytes per DTR pulse (link_set_paced). */
 static link_status_t cmd_boot_block(idc_t *d) {
-    for (size_t i = 0; i < d->boot_len; i++) {
-        link_status_t st = link_put(&d->link, d->boot_block[i]);
-        if (st != LINK_OK) return st;
-    }
-    return LINK_OK;
+    link_status_t st = LINK_OK;
+    link_set_paced(&d->link, true);
+    for (size_t i = 0; i < d->boot_len && st == LINK_OK; i++)
+        st = link_put(&d->link, d->boot_block[i]);
+    link_set_paced(&d->link, false);
+    return st;
 }
 
 static void tell(idc_t *d, idc_act_stage_t stage) {

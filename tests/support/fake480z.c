@@ -33,6 +33,7 @@ static link_status_t f_send(void *ctx, uint8_t byte) {
     fake480z_t *f = ctx;
     if (f->nout >= FAKE_MAX_OUT) return LINK_CLOSED;
     f->out[f->nout++] = byte;
+    if (f->paced) f->paced_out++;
     return LINK_OK;
 }
 
@@ -53,14 +54,21 @@ static void f_set_baud(void *ctx, uint32_t baud) {
     }
 }
 
+static void f_set_paced(void *ctx, bool paced) {
+    fake480z_t *f = ctx;
+    f->paced = paced;
+    f->paced_since = f->nout;
+}
+
 void fake480z_init(fake480z_t *f, const fake_in_t *script, size_t n) {
     memset(f, 0, sizeof *f);
     f->in = script;
     f->nin = n;
-    f->io = (link_io_t){f, f_recv, f_send, f_drain, f_set_baud};
+    f->io = (link_io_t){f, f_recv, f_send, f_drain, f_set_baud, f_set_paced};
 }
 
 size_t fake_bytes(fake_in_t *buf, size_t at, const uint8_t *bytes, size_t n) {
-    for (size_t i = 0; i < n; i++) buf[at + i] = (fake_in_t){FAKE_BYTE, bytes[i]};
+    for (size_t i = 0; i < n; i++)
+        buf[at + i] = (fake_in_t){FAKE_BYTE, bytes[i]};
     return at + n;
 }

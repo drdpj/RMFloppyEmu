@@ -239,6 +239,59 @@ static void test_a_byte_handed_over_while_dtr_is_down_waits_for_dtr(void) {
     TEST_ASSERT_EQUAL_HEX8(0xB2, b);
 }
 
+/* --- the boot block's pacing (link_set_paced): two bytes per DTR pulse ------------------------------- */
+
+#define PACED_FALLBACK_US 2000u /* link_uart.c: a third byte goes anyway this long after the first */
+
+static int64_t drop_dtr_alarm(alarm_id_t id, void *user) {
+    (void)id;
+    (void)user;
+    drive_480z(LINK_UART_PIN_DTR_IN, false);
+    return 0;
+}
+
+/* Sends three bytes paced at 125000, DTR up throughout, or dropped for 40 us 500 us in (pulse); returns the
+ * microseconds from just before the alarms are set to the third send()'s return. */
+static uint32_t send_three_paced(bool pulse) {
+    io->set_baud(io->ctx, LINK_BAUD_FAST);
+    io->set_paced(io->ctx, true);
+    uint64_t t0 = time_us_64(); /* before the alarms are set, which then fire at least that long after it */
+    if (pulse) {
+        after_us(500, drop_dtr_alarm);
+        after_us(540, raise_dtr_alarm);
+    }
+    TEST_ASSERT_EQUAL(LINK_OK, io->send(io->ctx, 0x11));
+    TEST_ASSERT_EQUAL(LINK_OK, io->send(io->ctx, 0x22));
+    TEST_ASSERT_EQUAL(LINK_OK, io->send(io->ctx, 0x33));
+    uint32_t us = (uint32_t)(time_us_64() - t0);
+    io->set_paced(io->ctx, false);
+    TEST_ASSERT_EQUAL(LINK_OK, io->drain(io->ctx));
+    static const uint8_t want[] = {0x11, 0x22, 0x33};
+    for (unsigned i = 0; i < sizeof want; i++) {
+        uint8_t b;
+        bool pe;
+        TEST_ASSERT_EQUAL(LINK_OK, io->recv(io->ctx, &b, &pe));
+        TEST_ASSERT_EQUAL_HEX8(want[i], b);
+    }
+    return us;
+}
+
+/* The ROS's receive interrupt drops DTR at each byte, sometimes hundreds of microseconds late; a third byte
+ * started before then overruns its SIO (core/link.h). Its shortest drop on a real 480Z was 37 us: one of 40 us,
+ * 500 us in, must be seen, and the third byte go when DTR is back. */
+static void test_paced_a_third_byte_waits_for_a_short_dtr_drop(void) {
+    uint32_t us = send_three_paced(true);
+    TEST_ASSERT_GREATER_OR_EQUAL_UINT32(540u, us);
+    TEST_ASSERT_LESS_THAN_UINT32(PACED_FALLBACK_US, us);
+}
+
+/* A 480Z that holds DTR up (a test rig) still gets every byte, the third after the fallback. */
+static void test_paced_with_dtr_held_up_a_third_byte_goes_after_the_fallback(void) {
+    uint32_t us = send_three_paced(false);
+    TEST_ASSERT_GREATER_OR_EQUAL_UINT32(PACED_FALLBACK_US, us);
+    TEST_ASSERT_LESS_THAN_UINT32(PACED_FALLBACK_US + 500u, us);
+}
+
 static void test_a_record_at_125000_goes_back_to_back(void) {
     io->set_baud(io->ctx, LINK_BAUD_FAST);
     uint64_t t0 = time_us_64();
@@ -393,6 +446,8 @@ int main(void) {
     RUN_TEST(test_every_byte_value_round_trips_at_62500);
     RUN_TEST(test_send_waits_for_the_480zs_dtr);
     RUN_TEST(test_a_byte_handed_over_while_dtr_is_down_waits_for_dtr);
+    RUN_TEST(test_paced_a_third_byte_waits_for_a_short_dtr_drop);
+    RUN_TEST(test_paced_with_dtr_held_up_a_third_byte_goes_after_the_fallback);
     RUN_TEST(test_a_record_at_125000_goes_back_to_back);
     RUN_TEST(test_go_fast_sends_5a_00_01_at_9600_then_switches);
     RUN_TEST(test_rts_while_recv_waits_is_one_reset_and_drops_cts);

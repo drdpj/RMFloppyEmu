@@ -198,18 +198,19 @@ static void test_fast_baud_rejects_other_rates_and_keeps_the_last(void) {
     TEST_ASSERT_EQUAL_UINT(4, warn_line[2]);
 }
 
-static void test_boot_baud_is_62500_by_default_and_takes_125000(void) {
-    TEST_ASSERT_EQUAL_UINT32(62500u, c.boot_baud);
-    parse("boot-baud = 125000\n");
+/* 125000, the IDC's, since the boot block goes paced (core/link.h, link_set_paced). */
+static void test_boot_baud_is_125000_by_default_and_takes_62500(void) {
     TEST_ASSERT_EQUAL_UINT32(125000u, c.boot_baud);
-    TEST_ASSERT_EQUAL_UINT(0, nwarn);
-    parse("BOOT-BAUD = 62500\n");
+    parse("boot-baud = 62500\n");
     TEST_ASSERT_EQUAL_UINT32(62500u, c.boot_baud);
+    TEST_ASSERT_EQUAL_UINT(0, nwarn);
+    parse("BOOT-BAUD = 125000\n");
+    TEST_ASSERT_EQUAL_UINT32(125000u, c.boot_baud);
 }
 
 static void test_boot_baud_rejects_other_rates_and_keeps_the_last(void) {
-    parse("boot-baud = 125000\nboot-baud = 9600\nboot-baud = fast\n");
-    TEST_ASSERT_EQUAL_UINT32(125000u, c.boot_baud);
+    parse("boot-baud = 62500\nboot-baud = 9600\nboot-baud = fast\n");
+    TEST_ASSERT_EQUAL_UINT32(62500u, c.boot_baud);
     TEST_ASSERT_EQUAL_UINT(2, nwarn);
     TEST_ASSERT_EQUAL_STRING("boot-baud must be 62500 or 125000", warn_why[0]);
     TEST_ASSERT_EQUAL_UINT(2, warn_line[0]);
@@ -320,7 +321,7 @@ int main(void) {
     RUN_TEST(test_show_commands_is_off_by_default_and_takes_yes_or_no);
     RUN_TEST(test_fast_baud_is_125000_by_default_and_takes_62500);
     RUN_TEST(test_fast_baud_rejects_other_rates_and_keeps_the_last);
-    RUN_TEST(test_boot_baud_is_62500_by_default_and_takes_125000);
+    RUN_TEST(test_boot_baud_is_125000_by_default_and_takes_62500);
     RUN_TEST(test_boot_baud_rejects_other_rates_and_keeps_the_last);
     RUN_TEST(test_rotary_is_full_and_forward_by_default);
     RUN_TEST(test_rotary_takes_each_kind_with_or_without_reverse);

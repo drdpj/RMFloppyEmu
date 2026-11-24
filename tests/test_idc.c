@@ -84,6 +84,16 @@ static void test_boot_block_is_sent_whole_with_no_status_byte(void) {
     EXPECT_OUT(0xB0, 0x07, 0xB1, 0x0C, 0x4B);
 }
 
+/* The boot block, and only the boot block, goes paced for the ROS: two bytes per DTR pulse (core/link.h,
+ * link_set_paced; docs/protocol.md, "Flow control"). Not the go-fast reply before it, nor what follows it. */
+static void test_boot_block_alone_is_paced(void) {
+    RUN(FP(0x00), FB(0xFF), FB(0x05), FB(0x00));
+    TEST_ASSERT_EQUAL_size_t(3 + sizeof boot + 2, f.nout); /* 5A 00 01, the block, 05 00 answered 00 00 */
+    TEST_ASSERT_EQUAL_size_t(sizeof boot, f.paced_out);
+    TEST_ASSERT_EQUAL_size_t(3 + sizeof boot, f.paced_since); /* off again straight after the block */
+    TEST_ASSERT_FALSE(f.paced);
+}
+
 static void test_boot_block_without_a_rom_is_an_unknown_command(void) {
     static const fake_in_t s[] = {FB(0xFF)};
     fake480z_init(&f, s, 1);
@@ -261,6 +271,7 @@ int main(void) {
     RUN_TEST(test_go_fast_from_9600);
     RUN_TEST(test_the_ros_s_go_fast_and_boot_block_use_the_boot_rate);
     RUN_TEST(test_boot_block_is_sent_whole_with_no_status_byte);
+    RUN_TEST(test_boot_block_alone_is_paced);
     RUN_TEST(test_boot_block_without_a_rom_is_an_unknown_command);
     RUN_TEST(test_unknown_commands_get_40_and_no_status_echo);
     RUN_TEST(test_configure_00_echoes_status_and_resets_the_drive_map);

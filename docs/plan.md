@@ -169,8 +169,8 @@ The approach is a C reimplementation of the disk unit's command set, with a stag
     −8.0 V, and the line at the 480Z's socket was clean (rise 0.76 us, fall 1.2 us), yet the boot block still failed
     at 125000; so did 10 us of idle between bytes and an 8N2 boot block. Then, with only the ROS's exchange at 62500
     (its `00` arrives with a parity error, its SIO being at 8N2) and every later one at 125000, CP/M booted and ran
-    `DIR` and `TYPE` at 125000. Only the ROS's loading of the boot block fails at 125000; why is an open question
-    (`docs/protocol.md`). Decided (owner, 2026-11-23): keep the split, as a setting, and find the cause later.
+    `DIR` and `TYPE` at 125000. Only the ROS's loading of the boot block fails at 125000; why was an open question
+    until 2026-11-24 (below). Decided (owner, 2026-11-23): keep the split, as a setting, and find the cause later.
   - With the modules back on 3V3 (about ±5.5 V), `PIP B:=A:*.*[V]` copied the whole system disc to a blank image
     and verified it at 125000, with no errors: 550 KB across the link, no parity errors, no resets. So a ±5.4 V
     transceiver from 3.3 V (the TI MAX3243E) is enough for the board (`docs/hardware.md`, "For a board").
@@ -190,8 +190,8 @@ The approach is a C reimplementation of the disk unit's command set, with a stag
     changes surviving a power cycle, power removed during a write (on a PC: a clean filesystem, and every changed
     sector only `E5` or whole new records, so nothing half-written), a 480Z reset in mid-transfer, and three
     whole-disc copies with verify. What remains of `docs/acceptance.md` is its Setup section.
-  - New: `fast-baud = 125000 | 62500` (default 125000, the IDC's) and `boot-baud = 62500 | 125000` (default
-    62500) in `RMFE.CFG` (`docs/sd-card.md`, `core/link.h`), unit-tested in `test_link`, `test_config` and
+  - New: `fast-baud = 125000 | 62500` (default 125000, the IDC's) and `boot-baud = 125000 | 62500` (default
+    62500 at first; 125000 since the boot block is paced, below) in `RMFE.CFG` (`docs/sd-card.md`, `core/link.h`), unit-tested in `test_link`, `test_config` and
     `test_idc`. The send side now starts a byte only with the transmitter idle and DTR asserted,
     as the IDC's SIO does; before, the byte waiting in the FIFO could go out after DTR dropped (it wasn't the cause
     here, but it was one byte beyond the IDC). The console's `k` key prints the link's last exchanges: bytes each
@@ -199,7 +199,15 @@ The approach is a C reimplementation of the disk unit's command set, with a stag
   - The FT232R harness is gone (the link pins go through the transceivers), so level 3 (`run_hil.py`,
     `run_hil_sd.py`) and MAME in the loop (`run_mame_linked.py`) can't run on this set-up; the real 480Z stands in.
     Level 2, the MAME comparison from recorded traces, runs on the PC as before.
-  - **Next:** the rest of `docs/acceptance.md` at 62500; then the board.
+  - **Found and fixed (2026-11-24): the boot block at 125000.** A trace the unit took of the 480Z's DTR edges and its
+    own byte starts showed that the ROS's receive interrupt runs about 388 us late just after `FF`. By the time it
+    dropped DTR the unit had started five bytes, and the fourth overran the SIO's FIFO. The ROS then waited for the lost
+    byte and timed out. The unit now sends the boot block paced, two bytes per DTR pulse
+    (`core/link.h`, `link_set_paced`; `src/pico/link_uart.c`), and `boot-baud` defaults to 125000, the IDC's.
+    The real 480Z booted that way at 125000. Tests: `test_idc` (only the boot block is paced), `test_config` (the
+    new default), and two in `test_link_uart` on the target (a 40 us DTR drop lets the third byte go; with DTR
+    held up, it goes after the 2 ms fallback).
+  - **Next:** the board.
 
 ## Decided (2026-11-20)
 

@@ -45,6 +45,7 @@
  * transceiver's inversion is handled. */
 #define LEVEL(asserted) ((asserted) ? LINK_UART_ASSERTED_LEVEL : !LINK_UART_ASSERTED_LEVEL)
 #define ASSERT_EDGE     (LINK_UART_ASSERTED_LEVEL ? GPIO_IRQ_EDGE_RISE : GPIO_IRQ_EDGE_FALL)
+#define DEASSERT_EDGE   (LINK_UART_ASSERTED_LEVEL ? GPIO_IRQ_EDGE_FALL : GPIO_IRQ_EDGE_RISE)
 
 /* Set by rts_irq() when the 480Z asserts RTS; read and cleared by take_reset() in the main loop, with
  * interrupts off. */
@@ -89,6 +90,27 @@ static inline void set_line(unsigned pin, bool asserted) {
 
 static inline bool line_asserted(unsigned pin) {
     return gpio_get(pin) == LINK_UART_ASSERTED_LEVEL;
+}
+
+/*
+ * The boot block's pacing (link_set_paced): at most two bytes per DTR pulse, as the ROS takes them. Its receive
+ * interrupt drops DTR at each byte, but can run a few hundred microseconds late, and a third or fourth byte started
+ * meanwhile overruns its SIO's FIFO (core/link.h). A drop can be over in 37 us, so it is counted by an edge
+ * interrupt, not looked for. If no drop comes within PACED_FALLBACK_US, the next byte goes anyway: the real ROS has
+ * always dropped DTR within 400 us, but a 480Z that holds it up (a test rig) must still get its block.
+ */
+#define PACED_BYTES_PER_PULSE 2u    /* docs/protocol.md, "Flow control" */
+#define PACED_FALLBACK_US     2000u /* five times the latest drop seen */
+
+static volatile uint32_t dtr_drops; /* written by dtr_irq(), read by lu_send() on core 0 */
+static bool paced;                  /* core 0 only: lu_set_paced(), lu_send() */
+static unsigned paced_sent;         /* bytes sent since paced_drops was taken */
+static uint32_t paced_drops, paced_from_us;
+
+static void __not_in_flash_func(dtr_irq)(void) {
+    if (!(gpio_get_irq_event_mask(LINK_UART_PIN_DTR_IN) & DEASSERT_EDGE)) return;
+    gpio_acknowledge_irq(LINK_UART_PIN_DTR_IN, DEASSERT_EDGE);
+    dtr_drops++;
 }
 
 /* The IDC's NMI. CTS is dropped here, not later, so the 480Z (which now waits for it to send 00 at 9600)
@@ -182,11 +204,20 @@ static link_status_t __not_in_flash_func(lu_send)(void *ctx, uint8_t byte) {
     exchange_t *x = &exchanges[exchange_now];
     bool waited = false;
     uint32_t wait_from = 0;
+    if (paced && paced_sent >= PACED_BYTES_PER_PULSE) {
+        while (dtr_drops == paced_drops && time_us_32() - paced_from_us < PACED_FALLBACK_US)
+            if (take_reset()) return LINK_RESET;
+        paced_sent = 0;
+    }
     for (;;) {
         if (take_reset()) return LINK_RESET;
         bool dtr = line_asserted(LINK_UART_PIN_DTR_IN);
         if (dtr && !(hw->fr & UART_UARTFR_BUSY_BITS)) {
             hw->dr = byte;
+            if (paced && paced_sent++ == 0) {
+                paced_drops = dtr_drops;
+                paced_from_us = time_us_32();
+            }
             x->last_us = time_us_32();
             if (waited && x->last_us - wait_from > x->dtr_wait_max_us) x->dtr_wait_max_us = x->last_us - wait_from;
             x->tx++;
@@ -219,7 +250,13 @@ static void __not_in_flash_func(lu_set_baud)(void *ctx, uint32_t baud) {
     sending_at = baud;
 }
 
-static const link_io_t io = {NULL, lu_recv, lu_send, lu_drain, lu_set_baud};
+static void __not_in_flash_func(lu_set_paced)(void *ctx, bool on) {
+    (void)ctx;
+    paced = on;
+    paced_sent = 0;
+}
+
+static const link_io_t io = {NULL, lu_recv, lu_send, lu_drain, lu_set_baud, lu_set_paced};
 
 const link_io_t *link_uart_io(void) {
     return &io;
@@ -272,11 +309,16 @@ void link_uart_init(void) {
 
     if (!irq_installed) {
         gpio_add_raw_irq_handler(LINK_UART_PIN_RTS_IN, rts_irq);
+        gpio_add_raw_irq_handler(LINK_UART_PIN_DTR_IN, dtr_irq);
         irq_set_enabled(IO_IRQ_BANK0, true);
         irq_installed = true;
     }
     gpio_acknowledge_irq(LINK_UART_PIN_RTS_IN, ASSERT_EDGE);
     gpio_set_irq_enabled(LINK_UART_PIN_RTS_IN, ASSERT_EDGE, true);
+    paced = false;
+    paced_sent = 0;
+    gpio_acknowledge_irq(LINK_UART_PIN_DTR_IN, DEASSERT_EDGE);
+    gpio_set_irq_enabled(LINK_UART_PIN_DTR_IN, DEASSERT_EDGE, true);
 }
 
 void link_uart_print_log(void) {

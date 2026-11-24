@@ -86,7 +86,8 @@ timeout 900 tests/pico/run_on_target.py build-pico-tests [test_<module> ...] [--
   they test. `test_link_uart` checks the 480Z link driver with no wiring. The UART runs in the PL011's internal
   loopback, and the test plays the 480Z's RTS and DTR by driving those input pins. It checks: 8E1; the three baud
   rates (9600, 125000 and 62500); every byte value at each; CTS only while waiting; DCD held; sending held off until
-  the 480Z's DTR, including a byte handed over while the one before is still going out; a record back to back at
+  the 480Z's DTR, including a byte handed over while the one before is still going out; the boot block's pacing
+  (two bytes per DTR pulse: a 40 us drop is seen, and with DTR held up the third byte goes after 2 ms); a record back to back at
   125000; go-fast; the RTS reset (once, from any wait, with both FIFOs emptied and the link back at 9600); and that
   undriven inputs read idle. Parity errors and the real pin levels need level 3.
   **Because it drives GP8 and GP9, disconnect the transceiver's receiver outputs from them (module 1 R2OUT and

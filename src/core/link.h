@@ -72,6 +72,8 @@ typedef struct {
     /* Waits until the last byte sent has left the transmitter completely. */
     link_status_t (*drain)(void *ctx);
     void (*set_baud)(void *ctx, uint32_t baud);
+    /* Turns the boot block's pacing on or off (link_set_paced). */
+    void (*set_paced)(void *ctx, bool paced);
 } link_io_t;
 
 typedef struct {
@@ -92,9 +94,9 @@ void link_set_fast_baud(link_t *l, uint32_t baud);
  * Sets the rate for a 00 from the 480Z's ROS, which then loads the boot block (command FF): LINK_BAUD_FAST (as the
  * IDC, and the default) or LINK_BAUD_HALF. The ROS sets its SIO to 8N2 (WR4 4C) [480Z ROS 1.2 1cb5, ROS 2.2 3cb5],
  * so its 00 reaches the unit's 8E1 receiver with a stop bit where the parity bit should be: a parity error, every
- * time, as 00 has even parity. The boot code and the CP/M BIOS send 8E1, so their 00s arrive clean. On a real 480Z
- * (ROS 1.2) the ROS lost bytes of the boot block at 125000 though everything after it worked there, and loaded it at
- * 62500 (docs/protocol.md, "Framing and baud rate").
+ * time, as 00 has even parity. The boot code and the CP/M BIOS send 8E1, so their 00s arrive clean. Unpaced, a real
+ * 480Z (ROS 1.2) lost bytes of the boot block at 125000 and loaded it at 62500; paced (link_set_paced), it loads it
+ * at 125000 (docs/protocol.md, "Framing and baud rate").
  */
 void link_set_boot_baud(link_t *l, uint32_t baud);
 
@@ -104,6 +106,16 @@ uint8_t link_fast_time_constant(uint32_t baud);
 /* One byte each way. Parity errors on single bytes are ignored, as the IDC ignores them [IDC3 0a1f]. */
 link_status_t link_get(link_t *l, uint8_t *byte);
 link_status_t link_put(link_t *l, uint8_t byte);
+
+/*
+ * Paces what is sent next for the 480Z's ROS: at most two bytes per DTR pulse, which is what its boot block loader
+ * takes. Its receive interrupt drops DTR at each byte and its byte routine raises it when its ring is empty, but
+ * the interrupt can run a few hundred microseconds late, and a unit that starts a third or fourth byte while DTR is
+ * still up overruns the SIO's 3-byte FIFO: the byte is lost, and the ROS times out ("Disc Error"). On a real 480Z
+ * (ROS 1.2D) it ran 388 us late just after FF, at 125000 [480Z ROS 1.2 1582, 07b5-07dd; docs/protocol.md, "Flow
+ * control"]. On for the boot block (command FF) only: the boot code and the CP/M BIOS hold DTR up through a record.
+ */
+void link_set_paced(link_t *l, bool paced);
 
 /* Command 00: replies 5A 00 and the fast rate's time constant (01 for 125000), waits for it to leave, then
  * switches to the fast rate: the boot rate if the 00 (the last byte link_get() returned) had a parity error. */

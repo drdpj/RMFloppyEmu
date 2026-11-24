@@ -287,6 +287,12 @@ static void r_set_baud(void *ctx, uint32_t baud) {
     replay_fail(r, "our unit sets %u baud; the IDC: %s", baud, d);
 }
 
+/* Pacing (link_set_paced) changes only when bytes start, which the trace's byte order doesn't show. */
+static void r_set_paced(void *ctx, bool paced) {
+    (void)ctx;
+    (void)paced;
+}
+
 /* ---- the discs: image files on the PC ------------------------------------------------------------ */
 
 typedef struct {
@@ -502,7 +508,7 @@ int main(int argc, char **argv) {
         if (!drive_open(&drives.drive[letter - 'A'], argv[i] + 2, argv[3], letter)) return 2;
     }
     const idc_drives_t ops = {&drives, d_present, d_cylinders, d_load, d_save, d_position};
-    const link_io_t io = {&replay, r_recv, r_send, r_drain, r_set_baud};
+    const link_io_t io = {&replay, r_recv, r_send, r_drain, r_set_baud, r_set_paced};
 
     static idc_t unit; /* about 17 KB of track caches */
     idc_init(&unit, &io, block, block_len);

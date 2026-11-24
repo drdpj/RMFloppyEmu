@@ -70,14 +70,19 @@ modules powered at 3.3 V (or one MAX3243); the wiring is in `docs/hardware.md`.
   the `00`s of the boot code and the CP/M BIOS arrive clean. The ROS's receive interrupt stores every byte into an
   8-byte ring without looking at errors, dropping DTR at each; its byte routine raises DTR again when the ring is
   empty [ROS 1.2 157e-159e, 07b5-07dd].
-- **On a real 480Z the ROS couldn't load the boot block at 125000 from this unit** (ROS 1.2, 2026-11-22): every byte
-  went out, paced by DTR two at a time as the IDC's are, and the ROS timed out ("Disc Error"). Everything after the
-  boot block worked at 125000: a unit answering the ROS's `00` with `5A 00 02` (62500) and every later `00` with
-  `5A 00 01` booted CP/M and ran `DIR` and `TYPE`. The line was clean at the 480Z's socket (rise 0.76 us, fall 1.2
-  us, a lone bit within 0.5 us of its 8 us), and neither 10 us of idle between bytes (the IDC's own spacing is 2-9 us)
-  nor sending the boot block at 8N2 helped. The cause is an open question. The unit tells the ROS's `00` by its
-  parity error and answers it at `boot-baud` (default 62500; `docs/sd-card.md`, `core/link.h`). That costs
-  nothing to speak of: the ROS's DTR pacing, not the wire, sets the boot block's time (0.93 s at 62500).
+- **On a real 480Z the ROS lost a byte of the boot block at 125000 until the unit paced it** (ROS 1.2D; found
+  2026-11-24). Unpaced, the unit started a byte whenever DTR was up. Just after `FF`, the ROS's receive interrupt,
+  which drops DTR, ran 388 us late, so five bytes went before DTR dropped. The SIO holds three plus the one it is
+  assembling, so the fourth overran and was lost. The ROS waited for it with DTR up, then timed out ("Disc Error").
+  The rest of the block went two bytes per pulse. Delaying the first byte 73 us, as the IDC does, booted, but the fourth
+  byte only just made it, and later in that block the interrupt ran 227 us late (three bytes); at 62500 a byte takes
+  twice as long, so the same delays fit. So the unit now sends the boot block **paced**, at most two bytes per DTR
+  pulse, and boots at 125000 (`core/link.h`, `link_set_paced`; "Flow control"). Everything after the boot block always
+  worked at 125000: the boot code and the CP/M BIOS hold DTR up through a record. Measured with a trace of the
+  480Z's DTR edges and the unit's byte starts, taken by the unit itself. Ruled out before: the transceivers (V−,
+  3V3 and 5 V), the edges at the 480Z's socket (rise 0.76 us, fall 1.2 us, a lone bit within 0.5 us of its 8 us),
+  10 us of idle between bytes, and an 8N2 boot block. `boot-baud` (`docs/sd-card.md`) is now 125000 by default;
+  62500 is kept as a fallback.
 - **The boot block is checked.** The ROS adds every byte after `FF` (load addresses, counts and data) into a 16-bit
   sum and compares it with the two bytes at the end; a mismatch, or no byte for about 145 ms, is "Disc Error"
   [480Z ROS 1.2 1f1e-1f4c, 078e].
@@ -112,6 +117,16 @@ modules powered at 3.3 V (or one MAX3243); the wiring is in `docs/hardware.md`.
     The real ROS's receive interrupt drops DTR at each byte and reads into an 8-byte ring, and its byte routine
     raises DTR again only when the ring is empty [480Z ROS 2.2 357e-359e, 07b5-07dd]. A unit that sees DTR only a millisecond late (through
     USB) sends about 11, and fails.
+  - **The ROS's interrupt can be late** (real 480Z, ROS 1.2D, 125000, 2026-11-24. Its channel B vectors, copied
+    from ROM 0756 to FC00 with I = FC, send a received byte and a special receive condition (FC14 and FC16) both
+    to 1582, so errors aren't looked at). DTR normally drops 114 us after
+    the start of the pulse's first byte, during the second. Just after `FF` it dropped 386-388 us after it, in every
+    run; once, at byte 92, 227 us. A unit that starts a byte whenever DTR is up sends five after `FF`, and the
+    fourth overruns the SIO ("Framing and baud rate"). So the unit paces the boot block: after two bytes it waits
+    for DTR to drop (counted by an edge interrupt, as a drop can last only 37 us) and rise again, or for 2 ms if
+    it never drops, for a 480Z that holds DTR up [`src/pico/link_uart.c`]. Each DTR pulse then gets two bytes,
+    and the boot block takes 0.92 s, as the ROS's pace sets it. The IDC isn't paced. It gets by because it starts
+    its first byte about 73 us after `FF` and leaves 2-9 us between bytes.
   - **Timeouts:** the ROS gives up about 145 ms after the last byte it received (144 and 145 ms, in the boot
     block and waiting for `FF`'s answer), pulses RTS and shows "Disc Error". Replies up to 186 ms later were
     tolerated after `0C` (FORMAT), so the wait depends on the command. The real unit through USB answers in
@@ -487,10 +502,9 @@ Whether the 480Z ever sends with RTS down is an open question.
       3900 of 8192 bytes; the differences found so far are the version byte (`51`), the drive-type test stepping
       up to 49 times instead of 44, and a drive-byte mask in 0f77 (below). Both give a boot block the firmware
       finds.
-- [ ] Why the ROS (1.2, on a real 480Z) can't load the boot block from the unit at 125000, when the IDC's works and
-      everything after the boot block runs at 125000 ("Framing and baud rate"). Next to try: start the first byte
-      73 us after `FF` as the IDC does (the unit starts at once, while the ROS is still sending `FF`'s stop bits),
-      and scope the 480Z's DTR (J5-2) through the boot block.
+- [x] Why the ROS (1.2, on a real 480Z) couldn't load the boot block from the unit at 125000: its receive interrupt
+      runs up to 388 us late just after `FF`, and the unit's fourth byte overran its SIO. Fixed by pacing the block,
+      two bytes per DTR pulse (2026-11-24; "Framing and baud rate", "Flow control").
 - [ ] The drive byte's bits 3, 4 and 7, and bit 6 (inferred as double-step; "The drive byte"). Bits 0–2 and 5 are
       decoded.
 - [x] Trace the utilities (`FORMAT`, `VERIFY`, `FASTCOPY`, `COPYFILE`, `SYSGEN`): done, 2026-11-21 ("Commands seen

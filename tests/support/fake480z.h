@@ -19,11 +19,12 @@
 /*
  * Test-only: a scripted 480Z on the far end of a link_io_t. The script is what the 480Z sends,
  * including bytes with parity errors and RTS resets; everything the unit sends is recorded, with
- * each baud change and drain noted at its position in the output.
+ * each baud change and drain noted at its position in the output, and which bytes went out paced.
  */
 #ifndef RMFE_TESTS_FAKE480Z_H
 #define RMFE_TESTS_FAKE480Z_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -40,7 +41,7 @@ typedef struct {
 #define FP(x)  {FAKE_PARITY_BYTE, (uint8_t)(x)}
 #define FRESET {FAKE_RESET, 0}
 
-#define FAKE_MAX_OUT 16384
+#define FAKE_MAX_OUT    16384
 #define FAKE_MAX_EVENTS 64
 
 typedef struct {
@@ -56,6 +57,9 @@ typedef struct {
     size_t nbauds;
     size_t drains;
     uint32_t baud;
+    bool paced;         /* link_set_paced: now */
+    size_t paced_out;   /* bytes sent while paced */
+    size_t paced_since; /* bytes sent before the last change to pacing */
     link_io_t io;
 } fake480z_t;
 

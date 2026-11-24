@@ -87,7 +87,7 @@ void config_defaults(config_t *c) {
     c->rotary_reverse = false;
     c->show_commands = false;
     c->fast_baud = LINK_BAUD_FAST;
-    c->boot_baud = LINK_BAUD_HALF;
+    c->boot_baud = LINK_BAUD_FAST; /* the IDC's; the boot block goes paced (core/link.h, link_set_paced) */
 }
 
 static void warn_line(config_warn_fn warn, void *ctx, unsigned line, const char *why) {

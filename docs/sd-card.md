@@ -96,8 +96,8 @@ rotary = full
 show-commands = no
 # fast-baud: 125000 | 62500
 fast-baud = 125000
-# boot-baud: 62500 | 125000
-boot-baud = 62500
+# boot-baud: 125000 | 62500
+boot-baud = 125000
 ```
 
 A `#` starts a comment only at the beginning of a line, because a path may contain one.
@@ -110,7 +110,7 @@ A `#` starts a comment only at the beginning of a line, because a path may conta
 | `idc-rom` | a path | `IDC.ROM` | the IDC ROM image |
 | `show-commands` | `yes`, `no` | `no` | `yes`: the display also shows each command as the unit serves it (above) |
 | `fast-baud` | `125000`, `62500` | `125000` | the rate the link goes fast to. `125000` is the IDC's. The 480Z takes the rate from the unit's reply to `00` (`docs/protocol.md`, "Framing and baud rate"), so `62500` works too, at about half the transfer speed, for an RS-232 interface that can't manage 125000. The level-3 and MAME-in-the-loop tests need `125000` |
-| `boot-baud` | `62500`, `125000` | `62500` | the same, only for the 480Z's ROS loading the boot block (the `00` before `FF`, which the unit tells by its parity: `docs/protocol.md`). A real 480Z's ROS couldn't load it at 125000, though everything after it ran there; at 62500 it takes no longer. `125000` is the IDC's; MAME in the loop needs it |
+| `boot-baud` | `125000`, `62500` | `125000` | the same, only for the 480Z's ROS loading the boot block (the `00` before `FF`, which the unit tells by its parity: `docs/protocol.md`). `125000` is the IDC's, and MAME in the loop needs it. The block goes two bytes per DTR pulse, as the ROS takes it, so it takes about 0.9 s at either rate. `62500` is a fallback: before the unit paced the block, a real 480Z's ROS lost a byte of it at 125000 |
 | `rotary` | `full`, `half`, `quarter`, each optionally followed by `,reverse` | `full` | the knob, as FlashFloppy's option: one step per detent of an encoder with as many detents as pulses (an EC11; `full`), or per half or quarter of a pulse. `,reverse` turns it round, for an encoder that steps the wrong way |
 
 ## Writes

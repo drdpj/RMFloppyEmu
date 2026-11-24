@@ -30,7 +30,7 @@ static link_status_t check(link_t *l, link_status_t st) {
 }
 
 void link_init(link_t *l, const link_io_t *io) {
-    RMFE_ASSERT(l && io && io->recv && io->send && io->drain && io->set_baud);
+    RMFE_ASSERT(l && io && io->recv && io->send && io->drain && io->set_baud && io->set_paced);
     l->io = io;
     l->baud = LINK_BAUD_SLOW;
     l->fast_baud = LINK_BAUD_FAST;
@@ -47,6 +47,11 @@ void link_set_boot_baud(link_t *l, uint32_t baud) {
 void link_set_fast_baud(link_t *l, uint32_t baud) {
     RMFE_ASSERT(l && (baud == LINK_BAUD_FAST || baud == LINK_BAUD_HALF));
     l->fast_baud = baud;
+}
+
+void link_set_paced(link_t *l, bool paced) {
+    RMFE_ASSERT(l);
+    l->io->set_paced(l->io->ctx, paced);
 }
 
 uint8_t link_fast_time_constant(uint32_t baud) {

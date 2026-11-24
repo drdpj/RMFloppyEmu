@@ -47,9 +47,9 @@
  *   fast-baud = 125000 | 62500                (default 125000)
  *       The rate the link goes fast to (command 00). 125000 is the IDC's; the 480Z takes the rate from the unit's
  *       reply (core/link.h), so 62500 works too, for an RS-232 interface that can't drive the 480Z at 125000.
- *   boot-baud = 62500 | 125000                (default 62500)
- *       The same, for the 480Z's ROS loading the boot block (core/link.h, link_set_boot_baud): a real 480Z lost
- *       bytes of it at 125000 though everything after it worked there. 125000 is the IDC's.
+ *   boot-baud = 125000 | 62500                (default 125000)
+ *       The same, for the 480Z's ROS loading the boot block (core/link.h, link_set_boot_baud). 125000 is the
+ *       IDC's; the block goes paced, two bytes per DTR pulse (link_set_paced). 62500 is a fallback.
  *
  * The images listed (for init, and later the display) are as in FlashFloppy's native mode: .imd and .hfe files,
  * leaving out names starting with "." and hidden files, sorted by name ignoring case.
