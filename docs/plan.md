@@ -185,6 +185,11 @@ The approach is a C reimplementation of the disk unit's command set, with a stag
     480Z read the files and wrote a verified PIP copy, read back on a PC byte for byte; the unit kept the single
     density images FM and side 1's head map (H = 0) when saving them. RM's CP/M 2.2F reads single density too,
     though its banner says "Quad and Double Density".
+  - The rest of the checklist's tests (2026-11-24), all passing: `ERA` and reusing the space, filling a disc,
+    write protection ("Disc write protected", the image unchanged), an empty drive ("Disc Err on B: Select"),
+    changes surviving a power cycle, power removed during a write (on a PC: a clean filesystem, and every changed
+    sector only `E5` or whole new records, so nothing half-written), a 480Z reset in mid-transfer, and three
+    whole-disc copies with verify. What remains of `docs/acceptance.md` is its Setup section.
   - New: `fast-baud = 125000 | 62500` (default 125000, the IDC's) and `boot-baud = 62500 | 125000` (default
     62500) in `RMFE.CFG` (`docs/sd-card.md`, `core/link.h`), unit-tested in `test_link`, `test_config` and
     `test_idc`. The send side now starts a byte only with the transmitter idle and DTR asserted,

@@ -5,9 +5,11 @@ A failed item blocks the release until it is fixed, or the owner explicitly acce
 
 ## Setup
 
-- [ ] Firmware git hash and IDC ROM revision (IDC3 or IDC5) recorded
-- [ ] 480Z ROS version (sign-on message) recorded
-- [ ] Device connected to the SIO/4 port with the production cable; the real MD1 disconnected
+- [x] Firmware git hash and IDC ROM revision (IDC3 or IDC5) recorded (2026-11-24: 998e1f2, IDC3.1; in the results)
+- [x] 480Z ROS version (sign-on message) recorded (2026-11-24: "RML 80 Character LINK 480Z V 1.2D")
+- [ ] Device connected to the SIO/4 port with the production cable; the real MD1 disconnected (2026-11-24: not
+      yet. The runs so far used a breadboard, two MAX3232 modules on 3V3, and RM's own MD1 lead, with the MD1
+      disconnected. Tick this with the production board and cable)
 - [ ] SD card set up as `docs/sd-card.md` says: its `RMFE.CFG`, the images in A and B, and the IDC ROM recorded
 
 ## Boot and basic operation
@@ -24,15 +26,21 @@ A failed item blocks the release until it is fixed, or the owner explicitly acce
 
 - [x] `PIP` a file from A: to B:, then compare the copy with the original using a checksum utility (2026-11-23:
       the whole system disc to a blank image, `PIP B:=A:*.*[V]`, PIP's own verify; same files in `DIR B:`)
-- [ ] `ERA` a file; the directory updates, and the space is reused by the next write
-- [ ] Fill a disk until "disk full"; the image is still consistent afterwards
-- [ ] Power off the device during a write. On restart the image is either unchanged or holds the new data (never a
-      half-written sector), or the failure mode is documented
-- [ ] Changes survive a device power cycle, and the image read back on a PC matches (2026-11-23: the read-back
-      half: a 24 KB file the 480Z copied with PIP, over two extents, read back on a PC byte for byte the same; the
-      power cycle is still to do)
-- [ ] An image with the FAT read-only attribute (or `write-protect = yes`) gives the 480Z a write-protect error,
-      and is unchanged afterwards
+- [x] `ERA` a file; the directory updates, and the space is reused by the next write (2026-11-24: a 24 KB file
+      erased from a full disc, then a 24 KB PIP copy into its space; read back on a PC byte for byte)
+- [x] Fill a disk until "disk full"; the image is still consistent afterwards (2026-11-24: PIP copies until CP/M's
+      "DISK WRITE ERROR =B:BIG.TXT". On a PC the filesystem checks clean, every complete copy is identical, and PIP's
+      unfinished `.$$$` file is an exact prefix of the original)
+- [x] Power off the device during a write. On restart the image is either unchanged or holds the new data (never a
+      half-written sector), or the failure mode is documented (2026-11-24: power removed during `PIP B:=A:*.*`.
+      On a PC the filesystem checks clean, the finished files are identical, and each of the 107 sectors the 480Z
+      changed holds only `E5` and whole records of the files written: no half-written sector. The image holds
+      what CP/M had committed, as a real disc would)
+- [x] Changes survive a device power cycle, and the image read back on a PC matches (2026-11-24: a 24 KB PIP copy,
+      then the unit's power removed and restored; the 480Z read the file back, and so did a PC, byte for byte)
+- [x] An image with the FAT read-only attribute (or `write-protect = yes`) gives the 480Z a write-protect error,
+      and is unchanged afterwards (2026-11-24: the attribute set on a PC; "Disc write protected"; the image byte
+      for byte unchanged)
 
 ## Formats and media
 
@@ -47,12 +55,16 @@ A failed item blocks the release until it is fixed, or the owner explicitly acce
       sector on track 0 of each side)
 - [x] Changing disk images while the 480Z is at `A>` behaves as a disk change does (`^C` logs in the new disk, as
       RM's documentation says) (2026-11-23; PIP also wrote to a newly chosen image without a `^C`)
-- [ ] No image in a drive gives the same error on the 480Z as an empty real drive
+- [x] No image in a drive gives the same error on the 480Z as an empty real drive (2026-11-24: `(eject)`, then
+      `DIR B:` gives "Disc Err on B: Select", the usual message for an empty drive)
 
 ## Robustness
 
-- [ ] 480Z reset in the middle of a transfer: the next command works, with no device reset needed
-- [ ] A long session (copy a whole disk three times) completes without errors or retries
+- [x] 480Z reset in the middle of a transfer: the next command works, with no device reset needed (2026-11-24: RESET
+      during a PIP copy; `B` booted and `DIR` worked at once)
+- [x] A long session (copy a whole disk three times) completes without errors or retries (2026-11-24: three
+      `PIP B:=A:*.*[V]` copies, `ERA` between, at 125000: no errors, no parity errors on the link, about 500 KB
+      written and 1.2 MB read; the last copy read back on a PC, all 25 files identical)
 - [x] Software that talks to the drive directly (list any found, for example FORMAT and disk utilities) works
       (2026-11-23: RM's FORMAT and VERIFY; the 4MATION loaders, `0E` sector reads at 125000: Flowers of Crystal
       from the repaired IMD with both sector 08s, Dragon World from its IMD and from the HFE rebuilt from its flux
@@ -64,3 +76,4 @@ A failed item blocks the release until it is fixed, or the owner explicitly acce
 |---|---|---|---|---|---|
 | 2026-11-22 | 7f6f741 | IDC3.1 | 1.2 | owner | First run, not a full pass. Breadboard: two MAX3232 modules and RM's own lead. At 125000 the ROS's boot block fails ("Disc Error"). With `fast-baud = 62500`: `B` boots CP/M 2.2F to `A>`, and 4MATION's Flowers of Crystal boots |
 | 2026-11-23 | 998e1f2 (defaults: `boot-baud` 62500, `fast-baud` 125000) | IDC3.1 | 1.2 | owner | The ROS's boot block at 62500 and everything after it at 125000: `B` boots CP/M 2.2F to `A>`, and `DIR` and `TYPE` run at 125000 (with a test build of the same rule). Modules on 3V3: `PIP B:=A:*.*[V]` to a blank image, no errors; swapping images from the knob at `A>`; FORMAT and VERIFY of drive B (an IMD); 4MATION's Flowers of Crystal and Dragon World boot, Dragon World also from its rebuilt HFE; FORMAT and VERIFY of an HFE in B, and both formatted images read back on a PC; a 24 KB PIP copy read back on a PC byte for byte; `X` boots from B; both power-on orders boot; `TYPE` of a 24 KB file; single, double and quad density, one- and two-sided, read and written (2026-11-24); `DIR` on A:, B:, C: and D:; all at 125000 with no parity errors on the link. The rest of the checklist is still to do |
+| 2026-11-24 | 998e1f2 (later commits are docs only; defaults: `boot-baud` 62500, `fast-baud` 125000) | IDC3.1 | 1.2 | owner | Every format (SD, DD, QD; one and two sides), `ERA` and a full disc, write protection, an empty drive, a power cycle and power off during a write, a 480Z reset in mid-transfer, and a long session: all pass, checked on a PC where the card can show it. ROS sign-on "V 1.2D". Every item passes but the production cable, still to come (the breadboard and RM's own lead were used) |
