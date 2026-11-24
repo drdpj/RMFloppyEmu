@@ -68,9 +68,10 @@ up to 512 entries a folder are shown. A name too long for the screen scrolls whi
 **What the 480Z sees.** A new image goes in at once, between two of the 480Z's commands, never during one. The next
 command finds the new disc, as if it had been changed in an instant; an emptied drive answers "not ready" (`80`),
 as with no disc in it. Anything the 480Z had written that was still in the unit's cache for that drive goes to the
-old image first. The protocol has no way to tell the 480Z the disc has changed, so, as with a real MD1, CP/M needs
-a ^C (warm boot) after a change before it writes to that drive: until then it takes the new disc as read-only
-("BDOS ERR ON B: R/O"). While the unit opens the new image, the old one carries on serving the 480Z.
+old image first. The protocol has no way to tell the 480Z the disc has changed, but RM's CP/M 2.2F needs no ^C
+after one: on a real 480Z, PIP wrote to a newly chosen image in B straight away (2026-11-23). A ^C (warm boot)
+reloads the command processor from the boot drive, and complains if the disc there has no system on it. While the
+unit opens the new image, the old one carries on serving the 480Z.
 
 ## RMFE.CFG
 

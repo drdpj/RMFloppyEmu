@@ -178,7 +178,9 @@ The approach is a C reimplementation of the disk unit's command set, with a stag
     drive B, and the 4MATION games with their own loaders: Flowers of Crystal from the repaired IMD, and Dragon World
     from its IMD and from the HFE rebuilt from its flux capture, the first HFE on the real machine. Then FORMAT and
     VERIFY of an HFE in drive B, `X` booting from drive B, and `DIR` on all four CP/M drives (both sides of both
-    images). All at 125000 with no parity errors (`docs/acceptance.md`).
+    images). All at 125000 with no parity errors (`docs/acceptance.md`). Read back on a PC: both formatted images
+    (cpmdw for the IMD, `tools/hfedump` for the HFE), and a 24 KB file the 480Z copied with PIP, byte for byte.
+    Also: `TYPE` of that file (two extents), and booting with either the unit or the 480Z powered on first.
   - New: `fast-baud = 125000 | 62500` (default 125000, the IDC's) and `boot-baud = 62500 | 125000` (default
     62500) in `RMFE.CFG` (`docs/sd-card.md`, `core/link.h`), unit-tested in `test_link`, `test_config` and
     `test_idc`. The send side now starts a byte only with the transmitter idle and DTR asserted,
