@@ -10,7 +10,10 @@ A failed item blocks the release until it is fixed, or the owner explicitly acce
 - [ ] Device connected to the SIO/4 port with the production cable; the real MD1 disconnected (2026-11-24: not
       yet. The runs so far used a breadboard, two MAX3232 modules on 3V3, and RM's own MD1 lead, with the MD1
       disconnected. Tick this with the production board and cable)
-- [ ] SD card set up as `docs/sd-card.md` says: its `RMFE.CFG`, the images in A and B, and the IDC ROM recorded
+- [x] SD card set up as `docs/sd-card.md` says: its `RMFE.CFG`, the images in A and B, and the IDC ROM recorded
+      (2026-11-24: exFAT. `RMFE.CFG` holds the defaults but `show-commands = yes`, so `fast-baud` 125000 and
+      `boot-baud` 62500. `IDC.ROM` is IDC 3.1I. Drive A: RM's CP/M 2.2F system disc. Drive B: the image each test
+      names, made with `tools/imd/make_blank.py` and cpmdw, or the 4MATION discs)
 
 ## Boot and basic operation
 
