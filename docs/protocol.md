@@ -10,6 +10,8 @@ Each fact is tagged with its source:
 - **[IDC3 xxxx]**: read from the IDC3 ROM disassembly at that address.
 - **[MAME]**: stated in MAME's `src/mame/rm/rm_mq2.cpp`.
 - **[sch]**: from the 480Z main board schematic, D10829 sheet 6 (`background-docs/10829-6.png`).
+- **[IDC sch]**: from the IDC's circuit diagram, D12794 sheet 2 ("CPU, serial interface & clocks"), page 95 of the
+  480Z service manual (`background-docs/RM_480Z_Service_Manual-PN13821B_text.pdf`). The IDC is the MD1's board.
 
 Anything without a tag is inference and should be confirmed.
 
@@ -33,16 +35,31 @@ and a register dump) which probably runs on it. Command `15` passes channel A by
 On the 480Z this is the **SIO/4 port**, Z80 SIO channel B, which uses true RS-232 levels through 75188 drivers and
 75189 receivers [sch]. Its DIN connector J5:
 
-| J5 pin | Signal (480Z side) | Direction | Disk-unit signal [MAME] |
-|---|---|---|---|
-| 1 | RTS | out | → DCD (also triggers the unit's **NMI**) |
-| 2 | DTR | out | → CTS |
-| 3 | TxD | out | → RxD |
-| 4 | Signal earth | | GND |
-| 5 | CTS | in | ← DTR |
-| 6 | n/c | | |
-| 7 | DCD | in | ← RTS |
-| 8 | RxD | in | ← TxD |
+| J5 pin | Signal (480Z side) | Direction | Disk-unit signal [MAME, IDC sch] | IDC J1 pin [IDC sch] | MD1 socket pin |
+|---|---|---|---|---|---|
+| 1 | RTS | out | → DCD (also triggers the unit's **NMI**) | 6 | 5 |
+| 2 | DTR | out | → CTS | 5 | 7 |
+| 3 | TxD | out | → RxD | 3 | 8 |
+| 4 | Signal earth | | GND | 2 or 10 (frame ground; not shown which) | 4 |
+| 5 | CTS | in | ← DTR | 7 | 1 |
+| 6 | n/c | | | | 6 |
+| 7 | DCD | in | ← RTS | 8 | 2 |
+| 8 | RxD | in | ← TxD | 1 | 3 |
+
+**The unit's side** [IDC sch]: the IDC's SIO channel B goes through 75188 drivers and 75189 receivers to J1, a header
+on the IDC board: TxDB on 1, RTSB on 8 and DTRB on 7 out; RxDB on 3, CTSB on 5, DCDB on 6 and SYNCB (labelled DSRB)
+on 4 in. The inputs have 4K7 pull-ups on the line side, so an unconnected one reads asserted. DCDB also drives
+`IRESET-`, the Z80's NMI (pin 17), through an open-collector inverter (IC8) and link LK3: the NMI on the 480Z's RTS
+is in the hardware, as MAME has it. J1 also carries channel A (9, 11–16) and frame ground (2 and 10, each through
+0.47 Ω). The firmware doesn't use DSRB.
+
+**The MD1's socket** is reached from J1 by a loom inside the unit, which isn't on the drawing. RM's lead is a
+symmetric null modem (1–5, 2–7, 3–8, 4–4; `docs/hardware.md`), so the socket's pin numbers have the 480Z's
+directions (outputs on 1–3, inputs on 5, 7 and 8) but **not its signal names**: socket pin 1 is the IDC's DTR and
+pin 5 its DCD, not RTS and CTS. The socket column is inferred from the lead and the real 480Z runs (the 480Z's RTS,
+on socket pin 5, resets the unit; its DTR, on pin 7, paces the boot block, 525 pulses counted, 2026-11-24), not
+measured inside an MD1. MAME's pairing (RTS ↔ DCD, DTR ↔ CTS) looks odd beside a standard null modem, but it is
+right.
 
 **For the Pico:** these are ±12 V RS-232 levels: the 480Z's 75188s would drive about ±12 V into the Pico's 3.3 V
 pins. So the unit needs transceivers of its own, as the MD1 had. All four handshake lines are used: the unit drives
@@ -98,7 +115,7 @@ modules powered at 3.3 V (or one MAX3243); the wiring is in `docs/hardware.md`.
   It works as "clear to send one byte". The 480Z must not send unless the unit is asking.
 - **480Z → unit (480Z RTS, read by the unit as DCD and NMI):** the 480Z raises RTS before starting a new exchange.
   This NMIs the unit, which jumps to 0066, resets the stack, sets the SIO and CTC back to **9600 baud**, and re-enters
-  the command loop [IDC3 0066, MAME]. Every exchange therefore starts at 9600 and renegotiates to 125000.
+  the command loop [IDC3 0066, MAME, IDC sch]. Every exchange therefore starts at 9600 and renegotiates to 125000.
   - MAME suppresses this NMI for roughly the first 50 ms after power-up.
 - **Auto enables:** the IDC sets channel B's WR3 to `E1`: receive 8 bits, receiver on, **auto enables** on. Its SIO
   set-up table is `18 18 14 47 15 EA 11 00 13 E1` [IDC3 0123–012c]. So the SIO transmits only while its CTS (the
