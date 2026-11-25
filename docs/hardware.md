@@ -115,40 +115,34 @@ idle at mark) is negative.
 
 ### Two ways to connect it
 
-The board can take the link either way. The signal names are the IDC's own [D12794 sheet 2]; the module wiring is as
-in the table above.
+- **A DIN socket, wired as the back of the MD1** (the table above). It takes a crossover lead: RM's own, or any lead
+  wired 1–5, 2–7, 3–8, 4–4 between two 8-pin DIN plugs. This is what the breadboard uses and what was tested on
+  the real 480Z.
+- **A 7-pin header** (one row, 2.54 mm), which feeds a lead ending in an 8-pin DIN plug that goes straight into the
+  480Z's SIO/4, with no other lead. The crossing is done on the board, so the header is numbered from the 480Z's
+  side and the lead is straight through: header pins 1–5 go to plug pins 1–5, header 6 to plug 7 and header 7 to
+  plug 8 (the 480Z's pin 6 is not connected). The 480Z's outputs then arrive on 1–3, ground on 4 and its inputs
+  on 5–7.
 
-- **A DIN socket wired as the back of the MD1.** 8-pin DIN, the same layout as the 480Z's J5 (above), so RM's own
-  lead plugs in. This is what the breadboard uses and what was tested on the real 480Z.
-- **A header numbered as the IDC's J1.** J1 is the header on the IDC board that the MD1's internal loom runs from to
-  its back-panel socket. A header on our board with J1's numbering takes that loom (or one made the same way)
-  without re-pinning, so the unit can go in an MD1's case and keep its socket.
+The signal names are the IDC's own [D12794 sheet 2; `docs/protocol.md`, "Physical layer"]; the module wiring is
+as in the table above.
 
-| Signal (IDC name) | Direction | Pico 2 | MD1 socket pin | IDC J1 pin | 480Z J5 pin (via RM's lead) |
+| Header pin | Plug pin (480Z J5) | 480Z signal | Direction (ours) | Pico 2 | Our signal (IDC name) |
 |---|---|---|---|---|---|
-| DTR: "send me a byte" | out | GP6 | 1 | 7 | 5, CTS |
-| RTS: held asserted | out | GP7 | 2 | 8 | 7, DCD |
-| TxD | out | GP4, UART1 TX | 3 | 1 | 8, RxD |
-| signal earth | | GND | 4 | 2 and 10 (frame ground) | 4 |
-| DCD: the 480Z's reset (the IDC's NMI) | in | GP8 | 5 | 6 | 1, RTS |
-| (not connected) | | | 6 | | |
-| CTS: the 480Z's pace | in | GP9 | 7 | 5 | 2, DTR |
-| RxD | in | GP5, UART1 RX | 8 | 3 | 3, TxD |
-| DSR (SYNCB; unused by the firmware) | in | | | 4: leave unconnected | |
-| channel A (unused) | | | | 9, 11–16: leave unconnected | |
+| 1 | 1 | RTS | in | GP8 | DCD: the 480Z's reset (the IDC's NMI) |
+| 2 | 2 | DTR | in | GP9 | CTS: the 480Z's pace |
+| 3 | 3 | TxD | in | GP5, UART1 RX | RxD |
+| 4 | 4 | signal earth | | GND | signal earth |
+| 5 | 5 | CTS | out | GP6 | DTR: "send me a byte" |
+| 6 | 7 | DCD | out | GP7 | RTS: held asserted |
+| 7 | 8 | RxD | out | GP4, UART1 TX | TxD |
 
-What isn't known yet, and should be checked on a real MD1 before building to J1:
+Check the lead with a meter against the J5 diagram above (the plug is the mirror image of the socket, seen from its
+pins), then make the check above ("Checking it") at the plug: the same pins give the same readings.
 
-- **The loom.** The drawing shows J1, not the loom. The socket column is inferred from RM's symmetric lead and the
-  real 480Z runs (`docs/protocol.md`, "Physical layer"). Before relying on it, check each socket pin through to J1
-  with a meter on an MD1.
-- **J1's size, pitch and orientation.** The drawing numbers 16 pins (1–16) and doesn't say how many the header has
-  or how they're arranged. Match the header to the loom's connector, and make sure pin 1 is where the loom expects it.
-- **Signal earth.** J1 shows only frame ground, on 2 and 10, each through 0.47 Ω (R3, R4) to the IDC's 0 V.
-  Socket pin 4 presumably comes from one of them. On our board, tie both to GND.
-- **Unconnected inputs.** The IDC pulls its inputs up on the line side, so with nothing plugged in they read
-  asserted; ours read deasserted (an RS-232 receiver's input pulls down to mark, and the Pico's pull-ups on
-  GP8 and GP9 do the same with no transceiver). This only matters with no 480Z connected, because a connected 480Z drives both lines.
+With nothing connected, the IDC's inputs read asserted (it pulls them up on the line side) and ours read deasserted
+(an RS-232 receiver's input pulls down to mark, and the Pico's pull-ups on GP8 and GP9 do the same with no
+transceiver). This only matters with no 480Z connected, because a connected 480Z drives both lines.
 
 **Power: 3V3 (pin 36).** That is enough for the 480Z at 125000 (below), and keeps 5 V off the Pico's pins. The
 drivers then give about ±5.5 V. VSYS (pin 39) works too: the RP2350's GPIOs are 5 V tolerant while the chip is
