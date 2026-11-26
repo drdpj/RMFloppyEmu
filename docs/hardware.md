@@ -216,7 +216,8 @@ own 3.3 V regulator.
 | TFT `SCK` | | 19 | GP14 |
 | TFT `LED` | | 29 | GP22 |
 | TFT `SDO(MISO)` | | 16 | GP12 |
-| TFT `T_CLK`, `T_CS`, `T_DIN`, `T_DO`, `T_IRQ`; `SD_CS`, `SD_MOSI`, `SD_MISO`, `SD_SCK` | not connected | | |
+| TFT `T_CLK`, `T_CS`, `T_DIN`, `T_DO`, `T_IRQ` | not connected | | |
+| TFT `SD_CS`, `SD_MOSI`, `SD_MISO`, `SD_SCK` | not connected, unless the card is in the module's slot ("Wiring the SD card") | | |
 | encoder `A` | | 4 | GP2 |
 | encoder `B` | | 5 | GP3 |
 | encoder `C` (the middle pin of the three) | GND | 3 | |
@@ -245,6 +246,47 @@ picture fills only the top half of its glass: that is the panel, not a fault.
 
 The modules have their own pull-ups on SDA and SCL (to their `VCC`, so 3.3 V here) and take 3.3 V or 5 V; from 3.3 V
 the bus can't go above it. Unplug the probe's USB before changing modules.
+
+### Wiring the SD card
+
+The card is on SPI0 by itself (`src/pico/sd_hw_config.c`), at 15 MHz, with no card-detect pin: the firmware
+checks every few seconds whether the card answers. It runs from 3.3 V. There are three ways to fit it, all on the
+same four GPIOs, so the firmware doesn't change; fit only one at a time.
+
+**A micro-SD breakout** (on the bench now), from 3V3(OUT). A breakout with its own 3.3 V regulator is meant for
+5 V, and from 3.3 V leaves the card below 3 V; one without a regulator, or one that has run reliably from 3.3 V,
+is fine there.
+
+| From | To | Pico 2 pin | GPIO |
+|---|---|---|---|
+| breakout `VCC` | 3V3(OUT) | 36 | |
+| breakout `GND` | GND | 23 | |
+| breakout `MISO` (`DO`) | | 21 | GP16 (SPI0 RX) |
+| breakout `CS` | | 22 | GP17 |
+| breakout `SCK` (`CLK`) | | 24 | GP18 (SPI0 SCK) |
+| breakout `MOSI` (`DI`) | | 25 | GP19 (SPI0 TX) |
+
+**A bare micro-SD socket**, for a board. The card's pins in SPI mode (SD Physical Layer Simplified Specification):
+note that **VDD is the supply, +3.3 V, and VSS is ground**.
+
+| Card pin | Name | SPI role | To |
+|---|---|---|---|
+| 1 | DAT2 | unused | 3.3 V through 47 kΩ |
+| 2 | CD/DAT3 | CS | GP17 (pin 22), and 3.3 V through 47 kΩ |
+| 3 | CMD | MOSI (DI) | GP19 (pin 25), and 3.3 V through 47 kΩ |
+| 4 | VDD | supply | 3V3(OUT) (pin 36) |
+| 5 | CLK | SCK | GP18 (pin 24) |
+| 6 | VSS | ground | GND |
+| 7 | DAT0 | MISO (DO) | GP16 (pin 21), and 3.3 V through 47 kΩ |
+| 8 | DAT1 | unused | 3.3 V through 47 kΩ |
+
+The pull-ups hold the lines the card samples at power-up and while CS is high; 10–47 kΩ all work. Put 100 nF and
+about 10 µF from VDD to VSS at the socket: a card draws its current in bursts while it writes. A socket's own
+card-detect switch, if it has one, needn't be wired.
+
+**The MSP2806's own SD slot** (the TFT module's): its `SD_CS`, `SD_MOSI`, `SD_MISO` and `SD_SCK` go to GP17, GP19,
+GP16 and GP18 as above. The slot is powered from the module's own supply, so it needs no wire of its own, but
+then the card is on the TFT module and leaves with it.
 
 ## Power
 
