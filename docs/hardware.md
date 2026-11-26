@@ -253,13 +253,13 @@ The card is on SPI0 by itself (`src/pico/sd_hw_config.c`), at 15 MHz, with no ca
 checks every few seconds whether the card answers. It runs from 3.3 V. There are three ways to fit it, all on the
 same four GPIOs, so the firmware doesn't change; fit only one at a time.
 
-**A micro-SD breakout** (on the bench now), from 3V3(OUT). A breakout with its own 3.3 V regulator is meant for
-5 V, and from 3.3 V leaves the card below 3 V; one without a regulator, or one that has run reliably from 3.3 V,
-is fine there.
+**A micro-SD breakout** (on the bench now). Most have their own 3.3 V regulator and a level shifter, and are meant
+for 5 V: give one of those VSYS (pin 39, about 4.7 V), as on the bench, because from 3.3 V its regulator leaves the
+card below 3 V. A breakout with no regulator goes on 3V3(OUT) (pin 36) instead.
 
 | From | To | Pico 2 pin | GPIO |
 |---|---|---|---|
-| breakout `VCC` | 3V3(OUT) | 36 | |
+| breakout `VCC` | VSYS (regulated breakout) or 3V3(OUT) (no regulator) | 39 or 36 | |
 | breakout `GND` | GND | 23 | |
 | breakout `MISO` (`DO`) | | 21 | GP16 (SPI0 RX) |
 | breakout `CS` | | 22 | GP17 |
