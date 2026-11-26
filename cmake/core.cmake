@@ -31,6 +31,7 @@ set(RMFE_CORE_SOURCES
     ${RMFE_ROOT}/src/core/link.c
     ${RMFE_ROOT}/src/core/rotary.c
     ${RMFE_ROOT}/src/core/ui.c
+    ${RMFE_ROOT}/src/core/usb_share.c
     # src/flux: the self-contained track/image library (see src/flux/README.md)
     ${RMFE_ROOT}/src/flux/crc16.c
     ${RMFE_ROOT}/src/flux/flux_pll.c

@@ -48,9 +48,15 @@
  *       The rate the link goes fast to (command 00). 125000 is the IDC's; the 480Z takes the rate from the unit's
  *       reply (core/link.h), so 62500 works too, for an RS-232 interface that can't drive the 480Z at 125000.
  *   boot-baud = 125000 | 62500                (default 125000)
- *   display-type = auto | tft | oled-128x64 | oled-128x32, an OLED optionally with -rotate   (default auto)
  *       The same, for the 480Z's ROS loading the boot block (core/link.h, link_set_boot_baud). 125000 is the
  *       IDC's; the block goes paced, two bytes per DTR pulse (link_set_paced). 62500 is a fallback.
+ *   display-type = auto | tft | oled-128x64 | oled-128x32, an OLED optionally with -rotate   (default auto)
+ *   usb-storage = yes | no                    (default no; ours, FlashFloppy has none)
+ *       yes: a PC on the Pico's USB socket gets the card as a USB drive, taking it from the 480Z until the PC
+ *       ejects it (core/usb_share.h).
+ *
+ * The settings menu (core/ui.h) changes the options that are a choice from a list (config_item_t), and writes each
+ * change into RMFE.CFG (config_set_line), keeping the rest of the file as it was.
  *
  * The images listed (for init, and later the display) are as in FlashFloppy's native mode: .imd and .hfe files,
  * leaving out names starting with "." and hidden files, sorted by name ignoring case.
@@ -100,6 +106,7 @@ typedef struct {
     uint32_t boot_baud; /* the same, for the ROS's boot block */
     config_display_t display;
     bool display_rotate; /* an OLED turned 180 degrees */
+    bool usb_storage;
 } config_t;
 
 /* Told of each line of RMFE.CFG that is ignored: its number (from 1) and why. */
@@ -121,5 +128,49 @@ bool config_is_listed_image(const char *name, bool hidden);
 
 /* The order of the listing: by name, ignoring case; names differing only in case, byte by byte. */
 int config_compare_names(const char *a, const char *b);
+
+/* ---- the settings menu's options ---------------------------------------------------------------------- */
+
+/* The options the menu changes, in its order: each is a choice from a short list. Not idc-rom (a path) or
+ * display-type (the menu is on the display). */
+typedef enum {
+    CONFIG_ITEM_USB_STORAGE = 0,
+    CONFIG_ITEM_WRITE_PROTECT,
+    CONFIG_ITEM_DRIVE_A,
+    CONFIG_ITEM_DRIVE_B,
+    CONFIG_ITEM_IMAGE_ON_STARTUP,
+    CONFIG_ITEM_SHOW_COMMANDS,
+    CONFIG_ITEM_FAST_BAUD,
+    CONFIG_ITEM_BOOT_BAUD,
+    CONFIG_ITEM_ROTARY,
+    CONFIG_ITEM_COUNT
+} config_item_t;
+
+#define CONFIG_ITEM_LABEL_MAX  11u /* a label's characters, at most */
+#define CONFIG_ITEM_CHOICE_MAX 11u /* a choice's label's characters, at most */
+
+/* RMFE.CFG's key ("usb-storage"), and the menu's short label ("USB storage"). */
+const char *config_item_key(config_item_t item);
+const char *config_item_label(config_item_t item);
+
+/* How many choices the option has; each one's value as RMFE.CFG has it ("full,reverse"), and as the menu shows it
+ * ("full rev"). choice must be below config_item_choices(). */
+unsigned config_item_choices(config_item_t item);
+const char *config_item_value(config_item_t item, unsigned choice);
+const char *config_item_choice_label(config_item_t item, unsigned choice);
+
+/* Which of the option's choices c holds: config_item_choices(item) if none (c isn't a set of settings that
+ * config_defaults and config_parse could make). */
+unsigned config_item_get(const config_t *c, config_item_t item);
+
+/* Sets the option to a choice, exactly as RMFE.CFG's "key = value" line would. */
+void config_item_set(config_t *c, config_item_t item, unsigned choice);
+
+/* RMFE.CFG's text (len bytes) with the option `key` set to `value`, into out (cap bytes, not NUL-terminated),
+ * its length in *out_len. Every line that sets key becomes "key = value", keeping its line ending; if none does,
+ * the line is added at the end, with the file's first line ending (LF if it has none). Comments, blank lines,
+ * other options and lines that can't be read are kept byte for byte. False if the result doesn't fit. */
+bool config_set_line(const char *text, size_t len, const char *key, const char *value, char *out, size_t cap,
+                     size_t *out_len);
 
 #endif

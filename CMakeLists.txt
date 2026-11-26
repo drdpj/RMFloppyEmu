@@ -48,15 +48,17 @@ set(RMFE_PICO_SOURCES
     src/pico/panel.c
     src/pico/stack_meter.c
     src/pico/tft.c
+    src/pico/usb_disk.c
 )
 
 add_executable(rmfloppyemu ${RMFE_PICO_SOURCES})
 
-target_include_directories(rmfloppyemu PRIVATE src)
+# src/pico/usb: TinyUSB's configuration (tusb_config.h), which its sources include by that name.
+target_include_directories(rmfloppyemu PRIVATE src src/pico/usb)
 # The SDK's sources are compiled inside this target, so the strict warnings go on our files only.
 set_source_files_properties(${RMFE_PICO_SOURCES} PROPERTIES COMPILE_OPTIONS "${RMFE_WARNINGS};-Werror")
 target_link_libraries(rmfloppyemu rmfe_core rmfe_fatfs_sd pico_stdlib pico_multicore hardware_spi hardware_dma
-                      hardware_pwm hardware_i2c)
+                      hardware_pwm hardware_i2c tinyusb_device pico_unique_id)
 
 # Core 0's stack: the whole 4 KB of SCRATCH_Y (nothing else uses it), with the Cortex-M33's hardware stack
 # limit at its bottom, so an overflow faults at once (src/pico/fault.c) rather than overwriting core 1's

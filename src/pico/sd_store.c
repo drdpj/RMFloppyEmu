@@ -48,7 +48,8 @@ typedef struct {
     bool present;
     char letter;
     char path[CONFIG_PATH_MAX], new_path[NEW_PATH_MAX];
-    FIL f, nf; /* the image, and an IMD's replacement while it is written */
+    FIL f, nf;          /* the image, and an IMD's replacement while it is written */
+    bool fat_read_only; /* the file has the FAT read-only attribute */
     disk_image_io_t io;
     disk_image_t img;
     uint64_t index_us; /* when the disc started turning: its rotational position counts from here */
@@ -288,8 +289,11 @@ static bool open_begin(sd_drive_t *d, char letter, const char *path, const confi
         printf("SD: %c: deleted %s, an unfinished save; the image is as it was before it\n", letter, d->new_path);
     }
     cache_forget(d);
-    bool read_only = c->write_protect || (fi.fattrib & AM_RDO);
-    if (f_open(&d->f, path, FA_READ | (read_only ? 0 : FA_WRITE)) != FR_OK) {
+    /* Opened for writing unless the file is read-only, so write-protect can change while it is in the drive
+     * (sd_store_apply_write_protect); opening for writing writes nothing. */
+    d->fat_read_only = (fi.fattrib & AM_RDO) != 0;
+    bool read_only = c->write_protect || d->fat_read_only;
+    if (f_open(&d->f, path, FA_READ | (d->fat_read_only ? 0 : FA_WRITE)) != FR_OK) {
         printf("SD: %c: can't open %s\n", letter, path);
         *why = "can't open it";
         return false;
@@ -558,6 +562,13 @@ void sd_store_insert_commit(void) {
     open_finish(drives[drive]);
 }
 
+void sd_store_apply_write_protect(void) {
+    for (unsigned n = 0; n < IDC_PHYS_DRIVES; n++) {
+        sd_drive_t *d = drives[n];
+        if (d && d->present) d->img.read_only = cfg->write_protect || d->fat_read_only;
+    }
+}
+
 void sd_store_eject(unsigned drive) {
     take_out(drive);
     printf("SD: %c: empty\n", drives[drive]->letter);
@@ -584,6 +595,48 @@ bool sd_store_save_choice(unsigned drive) {
     return ok;
 }
 
+bool sd_store_save_option(const char *key, const char *value, const char **why) {
+    static char out[TEXT_MAX]; /* no bigger than read_text reads */
+    if (!mounted) {
+        *why = "no SD card";
+        return false;
+    }
+    char path[sizeof cfg_dir + 16];
+    snprintf(path, sizeof path, "%sRMFE.CFG", cfg_dir);
+    FILINFO fi;
+    size_t len = 0, out_len = 0;
+    if (exists(path, &fi)) {
+        if (fi.fsize > TEXT_MAX) { /* only its start is read: rewriting it would lose the rest */
+            printf("SD: %s is over %u bytes: not changed\n", path, TEXT_MAX);
+            *why = "RMFE.CFG is too big";
+            return false;
+        }
+        if (!read_text("RMFE.CFG", &len)) {
+            *why = "can't read RMFE.CFG";
+            return false;
+        }
+    }
+    if (!config_set_line(text, len, key, value, out, sizeof out, &out_len)) {
+        printf("SD: %s would be over %u bytes: not changed\n", path, TEXT_MAX);
+        *why = "RMFE.CFG is too big";
+        return false;
+    }
+    FIL f;
+    UINT put = 0;
+    bool ok = f_open(&f, path, FA_CREATE_ALWAYS | FA_WRITE) == FR_OK;
+    if (ok) {
+        ok = f_write(&f, out, (UINT)out_len, &put) == FR_OK && put == out_len;
+        ok = f_close(&f) == FR_OK && ok;
+    }
+    if (!ok) {
+        printf("SD: writing %s failed\n", path);
+        *why = "can't write RMFE.CFG";
+        return false;
+    }
+    printf("SD: %s: %s = %s\n", path, key, value);
+    return true;
+}
+
 void sd_store_unit(ui_unit_t *u) {
     memset(u, 0, sizeof *u);
     u->card = mounted;
@@ -608,6 +661,17 @@ bool sd_store_mounted(void) {
 bool sd_store_card_responds(void) {
     sd_card_t *sd = sd_get_by_num(0);
     return sd && sd->sd_test_com(sd);
+}
+
+void sd_store_release(void) {
+    for (unsigned n = 0; n < IDC_PHYS_DRIVES; n++)
+        take_out(n);
+    if (listing) (void)f_closedir(&list_dir);
+    listing = false;
+    opening = NULL;
+    (void)f_unmount("");
+    mounted = false;
+    printf("SD: the card is let go: both drives are empty\n");
 }
 
 void sd_store_card_gone(void) {

@@ -80,6 +80,15 @@ void sd_store_insert_commit(void);
 /* Takes a drive's image out, leaving it empty. Only between commands, after idc_change_disc(). */
 void sd_store_eject(unsigned drive);
 
+/* write-protect (the settings given to sd_store_insert_startup_images) has changed: the images in the drives
+ * follow it now. Only between commands, after idc_change_disc() for each drive, so nothing written under the old
+ * setting is still in the command layer's cache. */
+void sd_store_apply_write_protect(void);
+
+/* Sets key = value in RMFE.CFG (core/config.h, config_set_line), keeping the rest of it; makes the file if there
+ * is none. On failure *why says why in a few words. One step: a read and a write of at most 2 KB. */
+bool sd_store_save_option(const char *key, const char *value, const char **why);
+
 /* Names the drive's image in IMAGE_x.CFG (empty if the drive is), as FlashFloppy remembers the last one chosen. */
 bool sd_store_save_choice(unsigned drive);
 
@@ -93,6 +102,10 @@ bool sd_store_save_choice(unsigned drive);
 bool sd_store_mounted(void);
 bool sd_store_card_responds(void);
 void sd_store_card_gone(void);
+
+/* Lets the card go, for a PC to have over USB (core/usb_share.h): both drives' images closed (after
+ * idc_change_disc() for each), FatFs unmounted. Mount it again with sd_store_mount(). Only between requests. */
+void sd_store_release(void);
 bool sd_store_startup_path(unsigned n, const config_t *c, char path[CONFIG_PATH_MAX]);
 
 /* Test hook: every save takes ms longer (0: none), as a slow card would. Either core may call it. */

@@ -23,7 +23,7 @@
  * UI_REQ_LIST request and read by core 1 only once that is done.
  *
  * Each slot has one writer and one reader, handed over by a flag with a memory barrier; what the drives hold is
- * copied under a spin lock (held for a copy of about 600 bytes, never in an interrupt). What the unit is doing
+ * copied under a spin lock (held for a copy of about 900 bytes, never in an interrupt). What the unit is doing
  * (for the drives' lights) is a sequence-counted record: core 0 never waits to write it, and core 1 reads it
  * again if core 0 was writing meanwhile.
  */

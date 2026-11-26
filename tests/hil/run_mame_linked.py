@@ -162,25 +162,41 @@ def restart_pico(server, console, far):
     return report
 
 
-MENU_KEYS = "p+++---l" "+p----++l-" "r"  # drive A's list, B's list, a full redraw (src/pico/panel.h)
+# From home: show the cursor (the first turn only does that), drive A's list, B's list, a full redraw
+# (src/pico/panel.h). Never a setting: a long press at home opens the settings, and if a list is refused as busy the
+# keys can end up there, but every press that could save follows a long press that cancelled.
+MENU_KEYS = "-p+++---l" "+p----++l-" "r"
 MENU_KEY_GAP = 0.1  # seconds
+
+
+def go_home(console, heard):
+    """Long presses until the screen (the d key's dump) is home: a long press goes home from a list or the settings,
+    cancels a change to a setting, and at home opens the settings."""
+    for _ in range(4):
+        console.write(b"d")
+        time.sleep(0.5)
+        text = console.read(console.in_waiting).decode(errors="replace")
+        heard.append(text)
+        title = next((l for l in text.splitlines() if l.startswith("SCREEN  0 ")), "")
+        if "RMFloppyEmu" in title:
+            return
+        console.write(b"l")
+        time.sleep(MENU_KEY_GAP)
+    raise SystemExit("the menu didn't come home")
 
 
 def use_menu(console, stop):
     """Works the menu through the console until stop is set; returns how many keys were sent and what the console
     said meanwhile (read as it goes, so the serial buffer never fills)."""
     sent, heard = 0, []
+    go_home(console, heard)
     while not stop.is_set():
         for k in MENU_KEYS:
-            if stop.is_set():
-                break
             console.write(k.encode())
             sent += 1
             time.sleep(MENU_KEY_GAP)
             heard.append(console.read(console.in_waiting).decode(errors="replace"))
-    console.write(b"l")  # home, whatever state it was left in
-    time.sleep(0.5)
-    heard.append(console.read(console.in_waiting).decode(errors="replace"))
+        go_home(console, heard)
     return sent, "".join(heard)
 
 

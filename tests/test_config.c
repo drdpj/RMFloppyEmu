@@ -17,6 +17,7 @@
  */
 #include "core/config.h"
 
+#include <stdio.h>
 #include <string.h>
 
 #include "unity.h"
@@ -337,6 +338,166 @@ static void test_names_sort_ignoring_case_then_by_bytes(void) {
     TEST_ASSERT_EQUAL_INT(0, config_compare_names("same.imd", "same.imd"));
 }
 
+/* --- usb-storage, and the settings menu's options ---------------------------------------------------------- */
+
+static void test_usb_storage_is_off_by_default_and_takes_yes_or_no(void) {
+    TEST_ASSERT_FALSE(c.usb_storage);
+    parse("usb-storage = yes\n");
+    TEST_ASSERT_TRUE(c.usb_storage);
+    parse("usb-storage = maybe\n");
+    TEST_ASSERT_TRUE(c.usb_storage);
+    TEST_ASSERT_EQUAL_UINT(1, nwarn);
+    parse("USB-Storage = NO\n");
+    TEST_ASSERT_FALSE(c.usb_storage);
+}
+
+/* The menu's options and their values, by hand from docs/sd-card.md's table. */
+static void test_the_menus_options_are_the_list_options_with_their_values_in_the_files_words(void) {
+    static const struct {
+        config_item_t item;
+        const char *key;
+        unsigned n;
+        const char *values[6];
+    } want[] = {
+        {CONFIG_ITEM_USB_STORAGE, "usb-storage", 2, {"yes", "no"}},
+        {CONFIG_ITEM_WRITE_PROTECT, "write-protect", 2, {"yes", "no"}},
+        {CONFIG_ITEM_DRIVE_A, "drive-a", 3, {"auto", "40", "80"}},
+        {CONFIG_ITEM_DRIVE_B, "drive-b", 3, {"auto", "40", "80"}},
+        {CONFIG_ITEM_IMAGE_ON_STARTUP, "image-on-startup", 3, {"last", "static", "init"}},
+        {CONFIG_ITEM_SHOW_COMMANDS, "show-commands", 2, {"yes", "no"}},
+        {CONFIG_ITEM_FAST_BAUD, "fast-baud", 2, {"125000", "62500"}},
+        {CONFIG_ITEM_BOOT_BAUD, "boot-baud", 2, {"125000", "62500"}},
+        {CONFIG_ITEM_ROTARY,
+         "rotary",
+         6,
+         {"full", "half", "quarter", "full,reverse", "half,reverse", "quarter,reverse"}},
+    };
+    TEST_ASSERT_EQUAL_UINT(CONFIG_ITEM_COUNT, sizeof want / sizeof want[0]);
+    for (unsigned i = 0; i < CONFIG_ITEM_COUNT; i++) {
+        TEST_ASSERT_EQUAL(i, want[i].item);
+        TEST_ASSERT_EQUAL_STRING(want[i].key, config_item_key(want[i].item));
+        TEST_ASSERT_EQUAL_UINT(want[i].n, config_item_choices(want[i].item));
+        for (unsigned k = 0; k < want[i].n; k++)
+            TEST_ASSERT_EQUAL_STRING(want[i].values[k], config_item_value(want[i].item, k));
+    }
+}
+
+/* Each choice, set, is what the same "key = value" line in RMFE.CFG gives, and reads back as itself. */
+static void test_each_choice_sets_what_its_line_would_and_reads_back(void) {
+    for (unsigned i = 0; i < CONFIG_ITEM_COUNT; i++) {
+        config_item_t item = (config_item_t)i;
+        for (unsigned k = 0; k < config_item_choices(item); k++) {
+            config_t by_line, by_menu;
+            char line[64];
+            snprintf(line, sizeof line, "%s = %s\n", config_item_key(item), config_item_value(item, k));
+            config_defaults(&by_line);
+            config_parse(&by_line, line, strlen(line), on_warn, NULL);
+            config_defaults(&by_menu);
+            config_item_set(&by_menu, item, k);
+            TEST_ASSERT_EQUAL_MESSAGE(0, memcmp(&by_line, &by_menu, sizeof by_line), line);
+            TEST_ASSERT_EQUAL_UINT_MESSAGE(k, config_item_get(&by_menu, item), line);
+        }
+    }
+    TEST_ASSERT_EQUAL_UINT(0, nwarn);
+}
+
+static void test_the_defaults_read_as_the_first_choice_but_auto_drives_and_no_usb_or_commands(void) {
+    TEST_ASSERT_EQUAL_UINT(1, config_item_get(&c, CONFIG_ITEM_USB_STORAGE));   /* no */
+    TEST_ASSERT_EQUAL_UINT(1, config_item_get(&c, CONFIG_ITEM_WRITE_PROTECT)); /* no */
+    TEST_ASSERT_EQUAL_UINT(0, config_item_get(&c, CONFIG_ITEM_DRIVE_A));       /* auto */
+    TEST_ASSERT_EQUAL_UINT(0, config_item_get(&c, CONFIG_ITEM_IMAGE_ON_STARTUP));
+    TEST_ASSERT_EQUAL_UINT(1, config_item_get(&c, CONFIG_ITEM_SHOW_COMMANDS));
+    TEST_ASSERT_EQUAL_UINT(0, config_item_get(&c, CONFIG_ITEM_FAST_BAUD));
+    TEST_ASSERT_EQUAL_UINT(0, config_item_get(&c, CONFIG_ITEM_ROTARY));
+    parse("rotary = quarter,reverse\n");
+    TEST_ASSERT_EQUAL_UINT(5, config_item_get(&c, CONFIG_ITEM_ROTARY));
+}
+
+static void test_settings_no_choice_could_make_read_as_none(void) {
+    c.fast_baud = 9600;
+    TEST_ASSERT_EQUAL_UINT(2, config_item_get(&c, CONFIG_ITEM_FAST_BAUD));
+}
+
+/* The OLED's row is 18 characters: the label, a space, and the value in angle brackets while it changes. */
+static void test_every_label_and_value_fits_an_oled_row(void) {
+    for (unsigned i = 0; i < CONFIG_ITEM_COUNT; i++) {
+        config_item_t item = (config_item_t)i;
+        size_t label = strlen(config_item_label(item));
+        TEST_ASSERT_LESS_OR_EQUAL_size_t(CONFIG_ITEM_LABEL_MAX, label);
+        for (unsigned k = 0; k < config_item_choices(item); k++) {
+            size_t v = strlen(config_item_choice_label(item, k));
+            TEST_ASSERT_LESS_OR_EQUAL_size_t(CONFIG_ITEM_CHOICE_MAX, v);
+            TEST_ASSERT_LESS_OR_EQUAL_size_t(18u, label + 1u + v + 2u);
+        }
+    }
+}
+
+/* --- rewriting RMFE.CFG ---------------------------------------------------------------------------------- */
+
+static char out[512];
+static size_t out_len;
+
+static void set_line(const char *text, const char *key, const char *value, const char *want) {
+    TEST_ASSERT_TRUE(config_set_line(text, strlen(text), key, value, out, sizeof out, &out_len));
+    TEST_ASSERT_EQUAL_size_t(strlen(want), out_len);
+    TEST_ASSERT_EQUAL_MEMORY(want, out, out_len);
+}
+
+static void test_a_setting_replaces_its_line_and_keeps_everything_else(void) {
+    set_line("# my settings\n"
+             "write-protect = yes\n"
+             "\n"
+             "drive-a = 80   \n"
+             "nonsense\n"
+             "#drive-a = 40\n",
+             "drive-a", "auto",
+             "# my settings\n"
+             "write-protect = yes\n"
+             "\n"
+             "drive-a = auto\n"
+             "nonsense\n"
+             "#drive-a = 40\n");
+}
+
+static void test_a_key_in_any_case_and_spacing_is_found_and_every_line_of_it_set(void) {
+    set_line("  DRIVE-A=40\r\nfast-baud = 62500\r\nDrive-A = \"80\"\r\n", "drive-a", "auto",
+             "drive-a = auto\r\nfast-baud = 62500\r\ndrive-a = auto\r\n");
+}
+
+static void test_a_missing_setting_is_added_with_the_files_line_ending(void) {
+    set_line("write-protect = yes\r\n", "usb-storage", "yes", "write-protect = yes\r\nusb-storage = yes\r\n");
+    set_line("write-protect = yes", "usb-storage", "yes", "write-protect = yes\nusb-storage = yes\n");
+    set_line("a = b\rc = d", "rotary", "half", "a = b\rc = d\rrotary = half\r");
+}
+
+static void test_an_empty_file_gets_just_the_setting(void) {
+    set_line("", "usb-storage", "no", "usb-storage = no\n");
+    TEST_ASSERT_TRUE(config_set_line(NULL, 0, "usb-storage", "no", out, sizeof out, &out_len));
+    TEST_ASSERT_EQUAL_size_t(17, out_len);
+}
+
+static void test_the_last_line_keeps_having_no_ending_when_it_is_the_one_set(void) {
+    set_line("drive-a = 80", "drive-a", "40", "drive-a = 40");
+}
+
+static void test_a_result_too_big_is_refused(void) {
+    const char *text = "drive-a = 80\n";
+    TEST_ASSERT_FALSE(config_set_line(text, strlen(text), "drive-a", "auto", out, 14, &out_len));
+    TEST_ASSERT_TRUE(config_set_line(text, strlen(text), "drive-a", "auto", out, 15, &out_len));
+    TEST_ASSERT_FALSE(config_set_line(text, strlen(text), "usb-storage", "yes", out, 30, &out_len));
+    TEST_ASSERT_TRUE(config_set_line(text, strlen(text), "usb-storage", "yes", out, 31, &out_len));
+}
+
+static void test_the_rewritten_file_reads_as_the_setting_with_no_new_warnings(void) {
+    const char *text = "# RMFE.CFG\nrotary = half\nshow-commands = yes\n";
+    TEST_ASSERT_TRUE(config_set_line(text, strlen(text), "rotary", "quarter,reverse", out, sizeof out, &out_len));
+    config_parse(&c, out, out_len, on_warn, NULL);
+    TEST_ASSERT_EQUAL(CONFIG_ROTARY_QUARTER, c.rotary);
+    TEST_ASSERT_TRUE(c.rotary_reverse);
+    TEST_ASSERT_TRUE(c.show_commands);
+    TEST_ASSERT_EQUAL_UINT(0, nwarn);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_defaults_are_last_image_no_write_protect_auto_drives_and_idc_rom);
@@ -369,5 +530,18 @@ int main(void) {
     RUN_TEST(test_an_image_path_that_does_not_fit_is_refused);
     RUN_TEST(test_listed_images_are_imd_and_hfe_not_dot_names_or_hidden);
     RUN_TEST(test_names_sort_ignoring_case_then_by_bytes);
+    RUN_TEST(test_usb_storage_is_off_by_default_and_takes_yes_or_no);
+    RUN_TEST(test_the_menus_options_are_the_list_options_with_their_values_in_the_files_words);
+    RUN_TEST(test_each_choice_sets_what_its_line_would_and_reads_back);
+    RUN_TEST(test_the_defaults_read_as_the_first_choice_but_auto_drives_and_no_usb_or_commands);
+    RUN_TEST(test_settings_no_choice_could_make_read_as_none);
+    RUN_TEST(test_every_label_and_value_fits_an_oled_row);
+    RUN_TEST(test_a_setting_replaces_its_line_and_keeps_everything_else);
+    RUN_TEST(test_a_key_in_any_case_and_spacing_is_found_and_every_line_of_it_set);
+    RUN_TEST(test_a_missing_setting_is_added_with_the_files_line_ending);
+    RUN_TEST(test_an_empty_file_gets_just_the_setting);
+    RUN_TEST(test_the_last_line_keeps_having_no_ending_when_it_is_the_one_set);
+    RUN_TEST(test_a_result_too_big_is_refused);
+    RUN_TEST(test_the_rewritten_file_reads_as_the_setting_with_no_new_warnings);
     return UNITY_END();
 }

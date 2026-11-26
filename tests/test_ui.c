@@ -17,6 +17,7 @@
  */
 #include "core/ui.h"
 
+#include <stdio.h>
 #include <string.h>
 
 #include "unity.h"
@@ -42,6 +43,7 @@ static void drive(unsigned d, const char *path, bool hfe, unsigned cyls, bool ro
 
 void setUp(void) {
     memset(&unit, 0, sizeof unit);
+    config_defaults(&unit.config);
     unit.card = true;
     unit.rom = true;
     now = 5000;
@@ -112,7 +114,7 @@ static void test_home_shows_each_drive_with_its_kind_and_no_cursor_until_the_kno
     row_is(8, UI_ATTR_FAINT, "   HFE, 80 cylinders, write-protected");
     row_is(11, UI_ATTR_NORMAL, "");
     row_is(13, UI_ATTR_NORMAL, "");
-    row_is(14, UI_ATTR_FAINT, " Turn: pick a drive. Press: choose");
+    row_is(14, UI_ATTR_FAINT, " Turn, press: choose. Hold: settings");
     show_cursor();
     row_is(2, UI_ATTR_CURSOR, "A: games/Dragon World.IMD");
     row_is(3, UI_ATTR_CURSOR, "");
@@ -267,7 +269,7 @@ static void test_choosing_an_image_asks_for_it_and_goes_home_to_wait(void) {
     ui_request_done(&u, true, NULL, now);
     row_is(6, UI_ATTR_CURSOR, "B: a.imd");
     row_is(13, UI_ATTR_NORMAL, " B: a.imd");
-    row_is(14, UI_ATTR_FAINT, " Turn: pick a drive. Press: choose");
+    row_is(14, UI_ATTR_FAINT, " Turn, press: choose. Hold: settings");
     tick(UI_MESSAGE_MS - 1);
     row_is(13, UI_ATTR_NORMAL, " B: a.imd");
     tick(1);
@@ -852,6 +854,235 @@ static void test_changing_the_layout_redraws_every_row(void) {
     row_is(0, UI_ATTR_TITLE, " RMFloppyEmu");
 }
 
+/* --- settings (core/ui.h; docs/sd-card.md, "Settings") ------------------------------------------------------ */
+
+static void take_set(config_item_t item, unsigned choice) {
+    TEST_ASSERT_TRUE(ui_take_request(&u, &req));
+    TEST_ASSERT_EQUAL(UI_REQ_SET, req.kind);
+    TEST_ASSERT_EQUAL(item, req.item);
+    TEST_ASSERT_EQUAL_UINT(choice, req.choice);
+    TEST_ASSERT_FALSE(ui_take_request(&u, &req));
+}
+
+/* The platform has set it, posted the settings, then said it was done (pico/panel.c's order). */
+static void set_done(config_item_t item, unsigned choice) {
+    config_item_set(&unit.config, item, choice);
+    ui_set_unit(&u, &unit);
+    ui_request_done(&u, true, NULL, now);
+}
+
+static void test_a_long_press_at_home_opens_the_settings_with_each_value(void) {
+    event(ROTARY_LONG_PRESS); /* the cursor was hidden: a long press needn't show it first */
+    row_is(0, UI_ATTR_TITLE, " Settings");
+    row_is(1, UI_ATTR_FAINT, " RMFE.CFG: usb-storage");
+    row_is(2, UI_ATTR_CURSOR, "  USB storage  no");
+    row_is(3, UI_ATTR_NORMAL, "  Write-prot   no");
+    row_is(4, UI_ATTR_NORMAL, "  Drive A      auto");
+    row_is(5, UI_ATTR_NORMAL, "  Drive B      auto");
+    row_is(6, UI_ATTR_NORMAL, "  Startup      last");
+    row_is(7, UI_ATTR_NORMAL, "  Show cmds    no");
+    row_is(8, UI_ATTR_NORMAL, "  Fast baud    125000");
+    row_is(9, UI_ATTR_NORMAL, "  Boot baud    125000");
+    row_is(10, UI_ATTR_NORMAL, "  Knob         full");
+    row_is(11, UI_ATTR_NORMAL, "");
+    row_is(12, UI_ATTR_NORMAL, "");
+    row_is(14, UI_ATTR_FAINT, " Press: change. Hold: back");
+    TEST_ASSERT_FALSE(ui_take_request(&u, &req));
+}
+
+static void test_settings_show_the_values_in_force(void) {
+    config_item_set(&unit.config, CONFIG_ITEM_DRIVE_B, 2);
+    config_item_set(&unit.config, CONFIG_ITEM_ROTARY, 5);
+    unit.config.fast_baud = 9600; /* no choice of the menu's */
+    ui_set_unit(&u, &unit);
+    event(ROTARY_LONG_PRESS);
+    row_is(5, UI_ATTR_NORMAL, "  Drive B      80");
+    row_is(8, UI_ATTR_NORMAL, "  Fast baud    ?");
+    row_is(10, UI_ATTR_NORMAL, "  Knob         quarter rev");
+}
+
+static void test_turning_picks_an_option_and_names_its_key_and_stops_at_the_ends(void) {
+    event(ROTARY_LONG_PRESS);
+    event(ROTARY_CCW);
+    row_is(2, UI_ATTR_CURSOR, "  USB storage  no");
+    event(ROTARY_CW);
+    event(ROTARY_CW);
+    row_is(2, UI_ATTR_NORMAL, "  USB storage  no");
+    row_is(4, UI_ATTR_CURSOR, "  Drive A      auto");
+    row_is(1, UI_ATTR_FAINT, " RMFE.CFG: drive-a");
+    for (unsigned i = 0; i < 10; i++)
+        event(ROTARY_CW);
+    row_is(10, UI_ATTR_CURSOR, "  Knob         full");
+    row_is(1, UI_ATTR_FAINT, " RMFE.CFG: rotary");
+}
+
+static void test_press_changes_a_value_with_the_knob_and_press_again_saves_it(void) {
+    event(ROTARY_LONG_PRESS);
+    event(ROTARY_PRESS);
+    row_is(2, UI_ATTR_CURSOR, "  USB storage  <no>");
+    row_is(14, UI_ATTR_FAINT, " Turn: change. Press: save. Hold: cancel");
+    event(ROTARY_CW); /* no is the last: stays */
+    row_is(2, UI_ATTR_CURSOR, "  USB storage  <no>");
+    event(ROTARY_CCW);
+    event(ROTARY_CCW);
+    row_is(2, UI_ATTR_CURSOR, "  USB storage  <yes>");
+    TEST_ASSERT_FALSE(ui_take_request(&u, &req));
+    event(ROTARY_PRESS);
+    take_set(CONFIG_ITEM_USB_STORAGE, 0);
+    row_is(2, UI_ATTR_CURSOR, "  USB storage  yes"); /* the value being saved */
+    row_is(13, UI_ATTR_NORMAL, " Saving...");
+    row_is(14, UI_ATTR_FAINT, " Press: change. Hold: back");
+    tick(UI_MESSAGE_MS); /* stays while it is under way */
+    row_is(13, UI_ATTR_NORMAL, " Saving...");
+    set_done(CONFIG_ITEM_USB_STORAGE, 0);
+    row_is(2, UI_ATTR_CURSOR, "  USB storage  yes");
+    row_is(13, UI_ATTR_NORMAL, " USB storage: yes");
+}
+
+static void test_each_choice_of_a_list_is_stepped_through(void) {
+    event(ROTARY_LONG_PRESS);
+    for (unsigned i = 0; i < 8; i++)
+        event(ROTARY_CW); /* the knob */
+    event(ROTARY_PRESS);
+    static const char *const want[] = {"<full>", "<half>", "<quarter>", "<full rev>", "<half rev>", "<quarter rev>"};
+    for (unsigned k = 0; k < 6; k++) {
+        char row[UI_COLS + 1];
+        snprintf(row, sizeof row, "  Knob         %s", want[k]);
+        row_is(10, UI_ATTR_CURSOR, row);
+        event(ROTARY_CW);
+    }
+    row_is(10, UI_ATTR_CURSOR, "  Knob         <quarter rev>");
+    event(ROTARY_PRESS);
+    take_set(CONFIG_ITEM_ROTARY, 5);
+}
+
+static void test_pressing_on_the_value_already_set_saves_nothing(void) {
+    event(ROTARY_LONG_PRESS);
+    event(ROTARY_PRESS);
+    event(ROTARY_CCW);
+    event(ROTARY_CW); /* back to no */
+    event(ROTARY_PRESS);
+    TEST_ASSERT_FALSE(ui_take_request(&u, &req));
+    row_is(2, UI_ATTR_CURSOR, "  USB storage  no");
+    row_is(13, UI_ATTR_NORMAL, "");
+}
+
+static void test_a_long_press_cancels_a_change_and_another_goes_home(void) {
+    event(ROTARY_LONG_PRESS);
+    event(ROTARY_PRESS);
+    event(ROTARY_CCW);
+    event(ROTARY_LONG_PRESS);
+    TEST_ASSERT_FALSE(ui_take_request(&u, &req));
+    row_is(2, UI_ATTR_CURSOR, "  USB storage  no");
+    row_is(0, UI_ATTR_TITLE, " Settings");
+    event(ROTARY_LONG_PRESS);
+    row_is(0, UI_ATTR_TITLE, " RMFloppyEmu");
+    row_is(2, UI_ATTR_CURSOR, "A: (empty)"); /* home, with the cursor shown */
+}
+
+static void test_a_failed_save_says_why(void) {
+    event(ROTARY_LONG_PRESS);
+    event(ROTARY_CW);
+    event(ROTARY_PRESS);
+    event(ROTARY_CCW);
+    event(ROTARY_PRESS);
+    take_set(CONFIG_ITEM_WRITE_PROTECT, 0);
+    config_item_set(&unit.config, CONFIG_ITEM_WRITE_PROTECT, 0); /* set, but not written */
+    ui_set_unit(&u, &unit);
+    ui_request_done(&u, false, "not saved on the card", now);
+    row_is(13, UI_ATTR_WARN, " not saved on the card");
+    row_is(3, UI_ATTR_CURSOR, "  Write-prot   yes");
+}
+
+static void test_saving_again_before_the_last_is_done_is_refused(void) {
+    event(ROTARY_LONG_PRESS);
+    event(ROTARY_PRESS);
+    event(ROTARY_CCW);
+    event(ROTARY_PRESS);
+    take_set(CONFIG_ITEM_USB_STORAGE, 0);
+    event(ROTARY_CW);
+    event(ROTARY_PRESS);
+    event(ROTARY_CCW);
+    event(ROTARY_PRESS);
+    TEST_ASSERT_FALSE(ui_take_request(&u, &req));
+    row_is(13, UI_ATTR_WARN, " Busy: try again in a moment");
+    row_is(3, UI_ATTR_CURSOR, "  Write-prot   <yes>"); /* still being changed */
+}
+
+static void test_leaving_the_settings_alone_goes_home(void) {
+    event(ROTARY_LONG_PRESS);
+    event(ROTARY_PRESS);
+    tick(UI_IDLE_MS - 1);
+    row_is(0, UI_ATTR_TITLE, " Settings");
+    tick(1);
+    row_is(0, UI_ATTR_TITLE, " RMFloppyEmu");
+    row_is(2, UI_ATTR_NORMAL, "A: (empty)");
+    event(ROTARY_LONG_PRESS);
+    row_is(2, UI_ATTR_CURSOR, "  USB storage  no"); /* not still being changed */
+}
+
+static void test_while_the_card_is_on_usb_only_usb_storage_changes_and_no_image_can_be_chosen(void) {
+    unit.card = false;
+    unit.usb = true;
+    ui_set_unit(&u, &unit);
+    row_is(11, UI_ATTR_WARN, " On USB: eject it on the PC to use it");
+    show_cursor();
+    event(ROTARY_PRESS);
+    TEST_ASSERT_FALSE(ui_take_request(&u, &req));
+    row_is(13, UI_ATTR_WARN, " The card is on USB");
+    event(ROTARY_LONG_PRESS);
+    event(ROTARY_CW);
+    event(ROTARY_PRESS);
+    row_is(3, UI_ATTR_CURSOR, "  Write-prot   no");
+    row_is(13, UI_ATTR_WARN, " The card is on USB");
+    event(ROTARY_CCW);
+    event(ROTARY_PRESS);
+    row_is(2, UI_ATTR_CURSOR, "  USB storage  <no>");
+}
+
+static void test_oled_64_settings_have_a_title_three_rows_and_the_key_on_the_status_line(void) {
+    oled(UI_LAYOUT_OLED_64);
+    event(ROTARY_LONG_PRESS);
+    row_is(0, UI_ATTR_TITLE, "Settings");
+    row_is(1, UI_ATTR_CURSOR, "USB storage     no");
+    row_is(2, UI_ATTR_NORMAL, "Write-prot      no");
+    row_is(3, UI_ATTR_NORMAL, "Drive A       auto");
+    row_is(4, UI_ATTR_FAINT, "usb-storage");
+    blank_from(5);
+    event(ROTARY_PRESS);
+    row_is(1, UI_ATTR_CURSOR, "USB storage   <no>");
+    event(ROTARY_LONG_PRESS);
+    for (unsigned i = 0; i < 8; i++)
+        event(ROTARY_CW);
+    row_is(1, UI_ATTR_NORMAL, "Fast baud   125000");
+    row_is(2, UI_ATTR_NORMAL, "Boot baud   125000");
+    row_is(3, UI_ATTR_CURSOR, "Knob          full");
+    row_is(4, UI_ATTR_FAINT, "rotary");
+    event(ROTARY_PRESS);
+    for (unsigned i = 0; i < 5; i++)
+        event(ROTARY_CW);
+    row_is(3, UI_ATTR_CURSOR, "Knob <quarter rev>");
+}
+
+static void test_oled_32_settings_have_two_rows_and_the_key_on_the_status_line(void) {
+    oled(UI_LAYOUT_OLED_32);
+    event(ROTARY_LONG_PRESS);
+    event(ROTARY_CW);
+    event(ROTARY_CW);
+    row_is(0, UI_ATTR_NORMAL, "Write-prot      no");
+    row_is(1, UI_ATTR_CURSOR, "Drive A       auto");
+    row_is(2, UI_ATTR_FAINT, "drive-a");
+    blank_from(3);
+}
+
+static void test_oled_the_card_on_usb_is_a_warning_on_the_status_line(void) {
+    oled(UI_LAYOUT_OLED_64);
+    unit.card = false;
+    unit.usb = true;
+    ui_set_unit(&u, &unit);
+    row_is(4, UI_ATTR_WARN, "On USB: eject on PC");
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_home_shows_each_drive_with_its_kind_and_no_cursor_until_the_knob_is_used);
@@ -904,5 +1135,19 @@ int main(void) {
     RUN_TEST(test_oled_32_home_has_a_row_a_drive_and_a_wide_status_line);
     RUN_TEST(test_oled_32_choosing_has_two_rows_and_the_drive_on_the_status_line);
     RUN_TEST(test_changing_the_layout_redraws_every_row);
+    RUN_TEST(test_a_long_press_at_home_opens_the_settings_with_each_value);
+    RUN_TEST(test_settings_show_the_values_in_force);
+    RUN_TEST(test_turning_picks_an_option_and_names_its_key_and_stops_at_the_ends);
+    RUN_TEST(test_press_changes_a_value_with_the_knob_and_press_again_saves_it);
+    RUN_TEST(test_each_choice_of_a_list_is_stepped_through);
+    RUN_TEST(test_pressing_on_the_value_already_set_saves_nothing);
+    RUN_TEST(test_a_long_press_cancels_a_change_and_another_goes_home);
+    RUN_TEST(test_a_failed_save_says_why);
+    RUN_TEST(test_saving_again_before_the_last_is_done_is_refused);
+    RUN_TEST(test_leaving_the_settings_alone_goes_home);
+    RUN_TEST(test_while_the_card_is_on_usb_only_usb_storage_changes_and_no_image_can_be_chosen);
+    RUN_TEST(test_oled_64_settings_have_a_title_three_rows_and_the_key_on_the_status_line);
+    RUN_TEST(test_oled_32_settings_have_two_rows_and_the_key_on_the_status_line);
+    RUN_TEST(test_oled_the_card_on_usb_is_a_warning_on_the_status_line);
     return UNITY_END();
 }

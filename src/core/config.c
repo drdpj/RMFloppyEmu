@@ -90,6 +90,7 @@ void config_defaults(config_t *c) {
     c->boot_baud = LINK_BAUD_FAST; /* the IDC's; the boot block goes paced (core/link.h, link_set_paced) */
     c->display = CONFIG_DISPLAY_AUTO;
     c->display_rotate = false;
+    c->usb_storage = false; /* a PC powering the unit would otherwise take the card at every start */
 }
 
 static void warn_line(config_warn_fn warn, void *ctx, unsigned line, const char *why) {
@@ -212,6 +213,14 @@ static const char *parse_option(config_t *c, span_t key, span_t v) {
         }
         c->display = kind;
         c->display_rotate = rotate;
+    } else if (is(key, "usb-storage")) {
+        if (is(v, "yes")) {
+            c->usb_storage = true;
+        } else if (is(v, "no")) {
+            c->usb_storage = false;
+        } else {
+            return "usb-storage must be yes or no";
+        }
     } else if (is(key, "rotary")) {
         config_rotary_t kind;
         bool reverse;
@@ -273,4 +282,192 @@ int config_compare_names(const char *a, const char *b) {
         if (d) return d;
     }
     return strcmp(a, b);
+}
+
+/* ---- the settings menu's options ------------------------------------------------------------------------- */
+
+typedef struct {
+    const char *value; /* as RMFE.CFG has it */
+    const char *label; /* as the menu shows it */
+} choice_t;
+
+typedef struct {
+    const char *key;
+    const char *label;
+    unsigned count;
+    choice_t choices[6];
+} item_t;
+
+#define YES_NO                                                                                                         \
+    2u, {                                                                                                              \
+        {"yes", "yes"}, {"no", "no"}                                                                                   \
+    }
+#define BAUDS                                                                                                          \
+    2u, {                                                                                                              \
+        {"125000", "125000"}, {"62500", "62500"}                                                                       \
+    }
+#define DRIVE                                                                                                          \
+    3u, {                                                                                                              \
+        {"auto", "auto"}, {"40", "40"}, {"80", "80"}                                                                   \
+    }
+
+static const item_t items[CONFIG_ITEM_COUNT] = {
+    [CONFIG_ITEM_USB_STORAGE] = {"usb-storage", "USB storage", YES_NO},
+    [CONFIG_ITEM_WRITE_PROTECT] = {"write-protect", "Write-prot", YES_NO},
+    [CONFIG_ITEM_DRIVE_A] = {"drive-a", "Drive A", DRIVE},
+    [CONFIG_ITEM_DRIVE_B] = {"drive-b", "Drive B", DRIVE},
+    [CONFIG_ITEM_IMAGE_ON_STARTUP] = {"image-on-startup",
+                                      "Startup",
+                                      3u,
+                                      {{"last", "last"}, {"static", "static"}, {"init", "init"}}},
+    [CONFIG_ITEM_SHOW_COMMANDS] = {"show-commands", "Show cmds", YES_NO},
+    [CONFIG_ITEM_FAST_BAUD] = {"fast-baud", "Fast baud", BAUDS},
+    [CONFIG_ITEM_BOOT_BAUD] = {"boot-baud", "Boot baud", BAUDS},
+    [CONFIG_ITEM_ROTARY] = {"rotary",
+                            "Knob",
+                            6u,
+                            {{"full", "full"},
+                             {"half", "half"},
+                             {"quarter", "quarter"},
+                             {"full,reverse", "full rev"},
+                             {"half,reverse", "half rev"},
+                             {"quarter,reverse", "quarter rev"}}},
+};
+
+static const item_t *item_of(config_item_t item) {
+    RMFE_ASSERT((unsigned)item < CONFIG_ITEM_COUNT);
+    return &items[item];
+}
+
+const char *config_item_key(config_item_t item) {
+    return item_of(item)->key;
+}
+
+const char *config_item_label(config_item_t item) {
+    return item_of(item)->label;
+}
+
+unsigned config_item_choices(config_item_t item) {
+    return item_of(item)->count;
+}
+
+const char *config_item_value(config_item_t item, unsigned choice) {
+    RMFE_ASSERT(choice < item_of(item)->count);
+    return item_of(item)->choices[choice].value;
+}
+
+const char *config_item_choice_label(config_item_t item, unsigned choice) {
+    RMFE_ASSERT(choice < item_of(item)->count);
+    return item_of(item)->choices[choice].label;
+}
+
+static span_t span_of(const char *s) {
+    return (span_t){s, strlen(s)};
+}
+
+void config_item_set(config_t *c, config_item_t item, unsigned choice) {
+    RMFE_ASSERT(c);
+    const char *why = parse_option(c, span_of(config_item_key(item)), span_of(config_item_value(item, choice)));
+    RMFE_ASSERT(why == NULL); /* the table's values are all ones the parser takes */
+}
+
+static unsigned yes_no(bool yes) {
+    return yes ? 0u : 1u;
+}
+
+static unsigned baud(uint32_t b) {
+    return b == LINK_BAUD_FAST ? 0u : b == LINK_BAUD_HALF ? 1u : 2u;
+}
+
+static unsigned drive_type(idc_drive_type_t t) {
+    switch (t) {
+        case IDC_DRIVE_FOLLOW_IMAGE:
+            return 0u;
+        case IDC_DRIVE_40_TRACK:
+            return 1u;
+        case IDC_DRIVE_80_TRACK:
+            return 2u;
+    }
+    return 3u;
+}
+
+/* In the table's order: tests/test_config.c checks each choice set reads back as itself. */
+unsigned config_item_get(const config_t *c, config_item_t item) {
+    RMFE_ASSERT(c);
+    switch (item) {
+        case CONFIG_ITEM_USB_STORAGE:
+            return yes_no(c->usb_storage);
+        case CONFIG_ITEM_WRITE_PROTECT:
+            return yes_no(c->write_protect);
+        case CONFIG_ITEM_DRIVE_A:
+            return drive_type(c->drive_type[0]);
+        case CONFIG_ITEM_DRIVE_B:
+            return drive_type(c->drive_type[1]);
+        case CONFIG_ITEM_IMAGE_ON_STARTUP:
+            return c->image_on_startup <= CONFIG_STARTUP_INIT ? (unsigned)c->image_on_startup : 3u;
+        case CONFIG_ITEM_SHOW_COMMANDS:
+            return yes_no(c->show_commands);
+        case CONFIG_ITEM_FAST_BAUD:
+            return baud(c->fast_baud);
+        case CONFIG_ITEM_BOOT_BAUD:
+            return baud(c->boot_baud);
+        case CONFIG_ITEM_ROTARY:
+            if (c->rotary > CONFIG_ROTARY_QUARTER) return 6u;
+            return (unsigned)c->rotary + (c->rotary_reverse ? 3u : 0u);
+        case CONFIG_ITEM_COUNT:
+            break;
+    }
+    RMFE_ASSERT(false);
+    return 0u;
+}
+
+/* Appends n bytes to out, if they fit. */
+static bool put(char *out, size_t cap, size_t *at, const char *p, size_t n) {
+    if (n > cap - *at) return false;
+    memcpy(out + *at, p, n);
+    *at += n;
+    return true;
+}
+
+static bool put_setting(char *out, size_t cap, size_t *at, const char *key, const char *value, span_t ending) {
+    return put(out, cap, at, key, strlen(key)) && put(out, cap, at, " = ", 3u) &&
+           put(out, cap, at, value, strlen(value)) && put(out, cap, at, ending.p, ending.n);
+}
+
+/* The line's key, if it is a "key = value" line rather than a comment or blank. */
+static bool line_key(span_t line, span_t *key) {
+    if (is_comment_or_blank(line)) return false;
+    const char *eq = memchr(line.p, '=', line.n);
+    if (!eq) return false;
+    *key = trim((span_t){line.p, (size_t)(eq - line.p)});
+    return true;
+}
+
+bool config_set_line(const char *text, size_t len, const char *key, const char *value, char *out, size_t cap,
+                     size_t *out_len) {
+    RMFE_ASSERT((text || len == 0) && key && value && out && out_len);
+    size_t at = 0, pos = 0;
+    span_t line, ending = {"\n", 1u}, k;
+    bool found = false, have_ending = false;
+    while (next_line(text, len, &pos, &line)) {
+        size_t end = (size_t)(line.p - text) + line.n;
+        span_t this_ending = {text + end, pos - end};
+        if (!have_ending && this_ending.n) {
+            ending = this_ending;
+            have_ending = true;
+        }
+        if (line_key(line, &k) && is(k, key)) {
+            found = true;
+            if (!put_setting(out, cap, &at, key, value, this_ending)) return false;
+        } else if (!put(out, cap, &at, line.p, line.n + this_ending.n)) {
+            return false;
+        }
+    }
+    if (!found) {
+        bool unended = len > 0 && text[len - 1] != '\n' && text[len - 1] != '\r';
+        if (unended && !put(out, cap, &at, ending.p, ending.n)) return false;
+        if (!put_setting(out, cap, &at, key, value, ending)) return false;
+    }
+    *out_len = at;
+    return true;
 }

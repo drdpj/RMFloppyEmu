@@ -19,8 +19,10 @@
 /* Core 0's half of the menu: see menu_host.h. */
 #include "pico/menu_host.h"
 
+#include "core/usb_share.h"
 #include "pico/mailbox.h"
 #include "pico/sd_store.h"
+#include "pico/usb_disk.h"
 
 #include <stdio.h>
 
@@ -43,26 +45,39 @@ static volatile bool between_commands; /* written by idc's idle hook, read by me
 static host_state_t state;
 static ui_request_t cur;
 static volatile uint32_t longest_us; /* written by core 0; core 1 reads it for its report */
-static const config_t *settings;
+static config_t *settings;
 static bool (*card_back_fn)(void);
+static void (*apply_fn)(void);
+static usb_share_t share;
 static uint64_t next_check_us;
 static bool reinserting; /* the insert under way puts a start-up image back: no request to answer */
 static unsigned reinsert_next;
 
 static void post_unit(void) {
-    ui_unit_t u;
+    static ui_unit_t u; /* 900 bytes: not on the 4 KB stack */
     sd_store_unit(&u);
     u.rom = rom_found;
+    u.usb = share.lent;
+    u.config = *settings;
     mailbox_post_unit(&u);
 }
 
-void menu_host_init(idc_t *idc, bool rom, const config_t *c, bool (*card_back)(void)) {
+/* usb-storage is as the settings say: on the bus or not. */
+static void follow_usb_setting(void) {
+    usb_share_set_enabled(&share, settings->usb_storage);
+    if (!share.lent) usb_disk_set_connected(settings->usb_storage);
+}
+
+void menu_host_init(idc_t *idc, bool rom, config_t *c, bool (*card_back)(void), void (*apply)(void)) {
     unit = idc;
     rom_found = rom;
     settings = c;
     card_back_fn = card_back;
+    apply_fn = apply;
     next_check_us = time_us_64() + CARD_CHECK_US;
     state = HOST_WAITING;
+    usb_share_init(&share, c->usb_storage);
+    follow_usb_setting();
     post_unit();
 }
 
@@ -102,7 +117,99 @@ static void reinsert_step(void) {
     post_unit();
 }
 
-/* Is the card still there, or back? Only between requests. */
+/* A card is mounted again (it came back, or the PC gave it back): the settings and ROM were read afresh by
+ * card_back; put the start-up images back, a step at a time. */
+static void card_is_back(void) {
+    follow_usb_setting();
+    if (!sd_store_mounted()) return;
+    reinsert_next = 0;
+    state = HOST_REINSERTING;
+}
+
+/* ---- the card on USB (core/usb_share.h) ------------------------------------------------------------------------ */
+
+static void lend(void) {
+    for (unsigned d = 0; d < IDC_PHYS_DRIVES; d++)
+        change_disc(d); /* what the 480Z wrote goes to the card first */
+    sd_store_release();
+    usb_disk_lend(true);
+    printf("USB: the card is the PC's until it ejects it\n");
+    post_unit();
+}
+
+static void take_back(void) {
+    usb_disk_lend(false);
+    printf("USB: the card is the unit's again\n");
+    rom_found = card_back_fn && card_back_fn();
+    card_is_back();
+    post_unit();
+}
+
+/* Lends or takes back the card if it is time. Only between requests. */
+static void share_step(void) {
+    usb_share_input_t in = {
+        .host = usb_disk_host(),
+        .connected = usb_disk_connections(),
+        .eject = usb_disk_take_eject(),
+        .ready = sd_store_mounted(),
+    };
+    switch (usb_share_step(&share, &in)) {
+        case USB_SHARE_NOTHING:
+            return;
+        case USB_SHARE_LEND:
+            lend();
+            return;
+        case USB_SHARE_TAKE_BACK:
+            take_back();
+            return;
+    }
+}
+
+/* ---- the settings menu (UI_REQ_SET) ------------------------------------------------------------------------------ */
+
+/* Sets the option, applies it at once, and writes it into RMFE.CFG. While the PC has the card only usb-storage can
+ * change: turning it off takes the card back first, which reads RMFE.CFG again, so the option is set after that. */
+static void set_option(void) {
+    static char message[MAILBOX_MESSAGE_MAX];
+    config_item_t item = cur.item;
+    if ((unsigned)item >= CONFIG_ITEM_COUNT || cur.choice >= config_item_choices(item)) {
+        finish(false, "no such setting");
+        return;
+    }
+    if (share.lent && item != CONFIG_ITEM_USB_STORAGE) {
+        finish(false, "the card is on USB");
+        return;
+    }
+    config_item_set(settings, item, cur.choice);
+    if (item == CONFIG_ITEM_USB_STORAGE) {
+        usb_share_set_enabled(&share, settings->usb_storage);
+        if (share.lent && !settings->usb_storage) {
+            share_step(); /* takes it back */
+            config_item_set(settings, item, cur.choice);
+        }
+        follow_usb_setting();
+    }
+    if (item == CONFIG_ITEM_WRITE_PROTECT) {
+        for (unsigned d = 0; d < IDC_PHYS_DRIVES; d++)
+            change_disc(d); /* what was written under the old setting goes first */
+        sd_store_apply_write_protect();
+    }
+    if (item == CONFIG_ITEM_DRIVE_A || item == CONFIG_ITEM_DRIVE_B) {
+        change_disc(item == CONFIG_ITEM_DRIVE_A ? 0u : 1u); /* the cached track was found with the old type */
+    }
+    if (apply_fn) apply_fn();
+    const char *why = NULL;
+    bool saved = sd_store_save_option(config_item_key(item), config_item_value(item, cur.choice), &why);
+    post_unit();
+    bool reinserting_after = state == HOST_REINSERTING;
+    snprintf(message, sizeof message, "Not saved: %s", why ? why : "?");
+    finish(saved, saved ? NULL : message); /* set all the same, until the next start */
+    if (reinserting_after) state = HOST_REINSERTING;
+}
+
+/* ---- the card coming and going ----------------------------------------------------------------------------------- */
+
+/* Is the card still there, or back? Only between requests, and not while the PC has it. */
 static void check_card(void) {
     if (sd_store_mounted()) {
         if (sd_store_card_responds()) return;
@@ -113,8 +220,7 @@ static void check_card(void) {
     } else if (sd_store_card_responds()) {
         rom_found = card_back_fn && card_back_fn();
         if (!sd_store_mounted()) return;
-        reinsert_next = 0;
-        state = HOST_REINSERTING;
+        card_is_back();
         post_unit();
     }
 }
@@ -123,7 +229,9 @@ static void step(void) {
     const char *why = NULL;
     switch (state) {
         case HOST_WAITING:
-            if (time_us_64() >= next_check_us) {
+            share_step();
+            if (state != HOST_WAITING) return; /* the PC gave the card back: putting the images back */
+            if (!share.lent && time_us_64() >= next_check_us) {
                 next_check_us = time_us_64() + CARD_CHECK_US;
                 check_card();
                 return;
@@ -150,6 +258,9 @@ static void step(void) {
                     sd_store_eject(cur.drive);
                     post_unit();
                     state = HOST_SAVING;
+                    return;
+                case UI_REQ_SET:
+                    set_option();
                     return;
             }
             return;
@@ -198,6 +309,7 @@ static void step(void) {
 void menu_host_poll(void) {
     if (!between_commands) return;
     uint64_t t0 = time_us_64();
+    usb_disk_poll();
     step();
     uint32_t took = (uint32_t)(time_us_64() - t0);
     if (took > longest_us) longest_us = took;

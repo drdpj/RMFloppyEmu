@@ -206,12 +206,28 @@ static void console_key(uint32_t ms) {
 }
 
 static const char *const request_names[] = {
-    [UI_REQ_LIST] = "list", [UI_REQ_INSERT] = "insert", [UI_REQ_EJECT] = "eject"};
+    [UI_REQ_LIST] = "list", [UI_REQ_INSERT] = "insert", [UI_REQ_EJECT] = "eject", [UI_REQ_SET] = "set"};
+
+/* The settings core 1 uses, as core 0 posts them: the knob, and show-commands. Each is taken only when it changes,
+ * so the console's c (show-commands until the next start) holds until then. */
+static void follow_settings(const config_t *c) {
+    static bool seen;
+    static config_t last;
+    if (seen && (c->rotary != last.rotary || c->rotary_reverse != last.rotary_reverse)) {
+        rotary_init(&knob, c->rotary, c->rotary_reverse, now_ms());
+    }
+    if (seen && c->show_commands != last.show_commands) ui_set_options(&ui, c->show_commands);
+    last = *c;
+    seen = true;
+}
 
 static void talk_to_core0(uint32_t ms) {
     static uint32_t unit_seen;
-    ui_unit_t u;
-    if (mailbox_unit_changed(&unit_seen, &u)) ui_set_unit(&ui, &u); /* before the answer: the menu then shows it */
+    static ui_unit_t u;                         /* 900 bytes: not on the 4 KB stack */
+    if (mailbox_unit_changed(&unit_seen, &u)) { /* before the answer: the menu then shows it */
+        ui_set_unit(&ui, &u);
+        follow_settings(&u.config);
+    }
     bool ok;
     char message[MAILBOX_MESSAGE_MAX];
     if (mailbox_take_done(&ok, message)) {
@@ -220,7 +236,11 @@ static void talk_to_core0(uint32_t ms) {
     }
     ui_request_t r;
     if (ui_take_request(&ui, &r)) {
-        printf("UI: %s %c \"%s\"\n", request_names[r.kind], 'A' + (int)r.drive, r.path);
+        if (r.kind == UI_REQ_SET) {
+            printf("UI: set %s = %s\n", config_item_key(r.item), config_item_value(r.item, r.choice));
+        } else {
+            printf("UI: %s %c \"%s\"\n", request_names[r.kind], 'A' + (int)r.drive, r.path);
+        }
         (void)mailbox_post_request(&r); /* the slot is free: one request at a time, and core 0 took the last */
     }
 }

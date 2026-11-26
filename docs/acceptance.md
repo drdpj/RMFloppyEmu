@@ -61,6 +61,25 @@ A failed item blocks the release until it is fixed, or the owner explicitly acce
 - [x] No image in a drive gives the same error on the 480Z as an empty real drive (2026-11-24: `(eject)`, then
       `DIR B:` gives "Disc Err on B: Select", the usual message for an empty drive)
 
+## Settings and USB storage
+
+- [x] A long press at home opens the settings; each option's value matches `RMFE.CFG`; a change made with the knob
+      is in `RMFE.CFG` afterwards, with the file's comments and other lines as they were (2026-11-26, on the bench
+      through the console: `usb-storage = yes` added at the end, the rest unchanged, read back over USB)
+- [x] `write-protect` turned on in the settings: `SAVE` to A: gives CP/M's write-protect error at once; turned off,
+      it works again (2026-11-26)
+- [x] With `usb-storage = yes`, plugging into a PC: the card appears there as a drive, the display says "On USB",
+      and `DIR` on the 480Z gives the empty-drive error (2026-11-26: mounted on Linux; on the 480Z, a boot error
+      and a disc error on `DIR`)
+- [x] An image copied onto the card from the PC, then the card ejected: the unit has the card back within a few
+      seconds, and the new image can be chosen and read on the 480Z (2026-11-26)
+- [x] The USB lead pulled out without ejecting: the unit has the card back, and it still mounts on a PC afterwards
+      (2026-11-26: the display went back to both drives at once, and the card mounted cleanly on the PC again)
+- [x] `usb-storage` turned off in the settings while the PC has the card: the PC loses it, the unit has it back,
+      and `RMFE.CFG` says `usb-storage = no` (2026-11-26, on the bench: the drive went from the PC, the unit
+      re-read the card and put both images back)
+- [x] A USB charger on the socket: the unit keeps the card (2026-11-26)
+
 ## Robustness
 
 - [x] 480Z reset in the middle of a transfer: the next command works, with no device reset needed (2026-11-24: RESET

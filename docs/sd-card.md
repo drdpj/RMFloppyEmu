@@ -110,6 +110,8 @@ fast-baud = 125000
 boot-baud = 125000
 # display-type: auto | tft | oled-128x64 | oled-128x32, an OLED optionally followed by -rotate
 display-type = auto
+# usb-storage: yes | no
+usb-storage = no
 ```
 
 A `#` starts a comment only at the beginning of a line, because a path may contain one.
@@ -125,6 +127,62 @@ A `#` starts a comment only at the beginning of a line, because a path may conta
 | `boot-baud` | `125000`, `62500` | `125000` | the same, only for the 480Z's ROS loading the boot block (the `00` before `FF`, which the unit tells by its parity: `docs/protocol.md`). `125000` is the IDC's, and MAME in the loop needs it. The block goes two bytes per DTR pulse, as the ROS takes it, so it takes about 0.9 s at either rate. `62500` is a fallback: before the unit paced the block, a real 480Z's ROS lost a byte of it at 125000 |
 | `display-type` | `auto`, `tft`, `oled-128x64`, `oled-128x32`; an OLED type optionally followed by `-rotate` | `auto` | the display, as FlashFloppy's option (which also has LCDs and more suffixes). `auto`: an OLED if one answers on I2C (at `0x3C` or `0x3D`), taken as 128 x 64, otherwise the TFT; FlashFloppy's `auto` takes an OLED as 128 x 32, so a 128 x 32 panel needs `oled-128x32`. `-rotate` turns an OLED's picture round 180 degrees. If an OLED is asked for and none answers, the TFT is used |
 | `rotary` | `full`, `half`, `quarter`, each optionally followed by `,reverse` | `full` | the knob, as FlashFloppy's option: one step per detent of an encoder with as many detents as pulses (an EC11; `full`), or per half or quarter of a pulse. `,reverse` turns it round, for an encoder that steps the wrong way |
+| `usb-storage` | `yes`, `no` | `no` | ours; FlashFloppy has none. `yes`: a PC on the Pico's USB socket gets the card as a USB drive (below). Off by default, because a PC that powers the unit would otherwise take the card at every start |
+
+## Settings
+
+A long press of the knob at home opens the settings: the options above that are a choice from a list, with their
+values. Not `idc-rom`, which is a path, or `display-type`, since the menu is on the display. Turn to pick one (the
+TFT shows its key in `RMFE.CFG` under the title; an OLED, on its status line), press to change it, turn to step
+through its values, and press again to save the one shown; a long press leaves it as it was. Another long press,
+or half a minute without the knob, goes back home.
+
+| Menu | Key |
+|---|---|
+| USB storage | `usb-storage` |
+| Write-prot | `write-protect` |
+| Drive A, Drive B | `drive-a`, `drive-b` |
+| Startup | `image-on-startup` |
+| Show cmds | `show-commands` |
+| Fast baud, Boot baud | `fast-baud`, `boot-baud` |
+| Knob | `rotary` (`full rev` is `full,reverse`) |
+
+A change takes effect at once, and is written into `RMFE.CFG` (in `RMFE/` if that folder exists), the file made if
+there is none. Only that option's line changes, to `key = value`; comments, blank lines and the other options stay
+as they were, and an option that wasn't in the file is added at its end. When the card can't be written (or
+`RMFE.CFG` is over 2 KB, more than the unit reads), the change still holds until the next start and the display
+says it wasn't saved. When each takes effect:
+
+- `write-protect`: on the images in the drives at once. Anything the 480Z had written that was still in the unit's
+  cache goes to the image first.
+- `drive-a`, `drive-b`: at once, as if the disc had been changed (what the 480Z had written goes to the image
+  first). CP/M learns the drive's type when it logs the disc in, so type ^C afterwards.
+- `fast-baud`, `boot-baud`: at the 480Z's next `00`, which it sends when it resets or boots.
+- `image-on-startup`: at the next start, or when a card goes back in.
+- `show-commands`, `rotary`, `usb-storage`: at once.
+
+## USB storage
+
+With `usb-storage = yes`, plugging the Pico 2's USB socket into a PC gives the PC the card, as a USB card reader
+would: it appears as a drive, to copy images on and off or edit the settings, without taking it out. A PC and the
+unit can't both use a card at once (the PC caches what it reads), so while the PC has it:
+
+- both drives are empty: the 480Z sees no disc (`80`), as when the card is out. Anything the 480Z had written goes
+  to the card first. Don't plug in a PC while the 480Z is writing;
+- the display says "On USB" (on the TFT, "On USB: eject it on the PC to use it"), no image can be chosen, and only
+  `usb-storage` can be changed in the settings.
+
+The unit has the card back when the PC **ejects** it (Eject or Safely Remove; on Linux, the file manager's
+eject button, which works without root where `eject` doesn't), when the USB lead comes out, or when `usb-storage` is turned off in the settings. It then
+reads the card again as when one is put back: the settings, the ROM and the images. After an eject the PC doesn't
+get the card again until it is unplugged and plugged in again, or `usb-storage` is turned off and on again.
+
+Eject before unplugging, as with any USB drive: the PC may not have written everything until then. Turning
+`usb-storage` off takes the card from the PC at once, as unplugging it would.
+
+A charger or power bank on the USB socket never asks for the card (it doesn't set the device up as a PC does), so
+the unit keeps it. A PC that powers the unit takes it at every start, until ejected; turn `usb-storage` off if the
+unit lives on a PC's USB port.
 
 ## Writes
 

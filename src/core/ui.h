@@ -31,6 +31,12 @@
  *   "(eject)" when the drive has an image, and ".." when not in the root. Turn to move, press to open a folder or
  *   choose an image; a long press, or UI_IDLE_MS without touching the knob, goes back home. Choosing the image in
  *   the other drive is refused (docs/sd-card.md: the same image can't be in both).
+ *   Settings: a long press at home (whether or not the cursor shows) lists the options of RMFE.CFG that are a
+ *   choice from a list (core/config.h, config_item_t), each with its value. Turn to pick one, press to change it:
+ *   its value goes in angle brackets, turning steps through its choices, a press saves the one shown (a
+ *   UI_REQ_SET request; the platform applies it and writes it into RMFE.CFG) and a long press leaves it as it was.
+ *   A long press, or UI_IDLE_MS without the knob, goes back home. While the card is on USB (ui_unit_t.usb) only
+ *   usb-storage can be changed, and no image can be chosen.
  *   A name too long to show ends in UI_ELLIPSIS, a character of its own for the platform to draw as "..." in one
  *   cell. When the cursor comes to it, it scrolls once (a pause at each end), then stays at its start.
  *
@@ -40,6 +46,8 @@
  *   dot over its image's path, the same for B. Choosing: "Image for A:", then three rows of the list.
  *   128 x 32 (UI_LAYOUT_OLED_32): rows 0-1, then the status line in row 2, 32 columns. Home: a row for each drive,
  *   "A", its dot, a space and the path. Choosing: two rows of the list.
+ *   Settings: "Settings" over three rows of options on a 128 x 64, two rows on a 128 x 32: the label, and the
+ *   value at the right. The status line has RMFE.CFG's key for the option picked.
  *   A drive's dot is a character of its own, UI_DOT_LIT or UI_DOT_OUT, for the platform to draw: lit while the
  *   drive's light is on. The cursor is UI_ATTR_CURSOR, for the platform to show in inverse. The status line says,
  *   first that comes: a message; at home, a missing card or ROM, the last command (show-commands), or each drive's
@@ -101,12 +109,15 @@ typedef enum {
     UI_REQ_LIST = 1, /* fill the dirlist with the folder `path` */
     UI_REQ_INSERT,   /* put the image `path` in `drive`, and name it in IMAGE_x.CFG */
     UI_REQ_EJECT,    /* empty `drive` */
+    UI_REQ_SET,      /* set option `item` to `choice`, and write it into RMFE.CFG */
 } ui_request_kind_t;
 
 typedef struct {
     ui_request_kind_t kind;
     unsigned drive;
     char path[CONFIG_PATH_MAX];
+    config_item_t item;
+    unsigned choice;
 } ui_request_t;
 
 typedef struct {
@@ -121,7 +132,9 @@ typedef struct {
 typedef struct {
     bool card; /* the SD card is mounted */
     bool rom;  /* the IDC ROM's boot block was found */
+    bool usb;  /* the card is lent to a PC over USB (core/usb_share.h); card is then false */
     ui_drive_t drive[IDC_PHYS_DRIVES];
+    config_t config; /* the settings in force */
 } ui_unit_t;
 
 /* What the unit has been doing: the platform keeps it from the command layer's activity hook (core/idc.h). */
@@ -138,6 +151,7 @@ typedef struct {
 typedef enum {
     UI_HOME,
     UI_CHOOSE,
+    UI_SETTINGS,
 } ui_mode_t;
 
 typedef struct {
@@ -166,12 +180,15 @@ typedef struct {
     bool show_commands;
     ui_activity_t act;
     uint32_t lit_until[IDC_PHYS_DRIVES];
-    idc_activity_t shown;  /* the command on the command row: the last with its drive known, or ended */
-    uint32_t shown_number; /* its number (ui_activity_t.commands), 0 for none */
+    idc_activity_t shown;         /* the command on the command row: the last with its drive known, or ended */
+    uint32_t shown_number;        /* its number (ui_activity_t.commands), 0 for none */
+    unsigned set_cursor, set_top; /* settings: the option picked, and the first shown */
+    bool editing;                 /* its value is being changed */
+    unsigned edit_choice;         /* to this */
 } ui_t;
 
-/* Starts at home, with no card and empty drives until ui_set_unit(). list is the platform's, filled for
- * UI_REQ_LIST requests. */
+/* Starts at home, with no card, empty drives and the default settings until ui_set_unit(). list is the platform's,
+ * filled for UI_REQ_LIST requests. */
 void ui_init(ui_t *u, dirlist_t *list, uint32_t now_ms);
 
 /* The layout to draw (the TFT's until this is called); every row is redrawn. */

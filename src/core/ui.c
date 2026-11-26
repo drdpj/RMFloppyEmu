@@ -26,6 +26,8 @@
  *             (show-commands); 11 a card or ROM warning; 13 a message; 14 help.
  *   choosing: 0 title; 1 the folder; 2-12 the list (a marker column, a space, 38 columns of name); 13 a
  *             message; 14 help. The marker is "*" for this drive's image and "A" or "B" for the other drive's.
+ *   settings: 0 title; 1 RMFE.CFG's key for the option picked; 2-12 the options (two spaces, the label in 12
+ *             columns, a space, the value); 13 a message; 14 help.
  */
 #include "core/ui.h"
 
@@ -44,6 +46,7 @@
 #define ITEM_COLS         (UI_COLS - 2u) /* choosing: after the marker and a space */
 #define OLED_STATUS_64    21u            /* 5 x 8 characters */
 #define OLED_STATUS_32    32u            /* 4 x 6 */
+#define LABEL_COLS        12u            /* settings, on the TFT: the labels' column */
 
 typedef enum {
     ITEM_EJECT,
@@ -204,7 +207,9 @@ static void draw_home(ui_t *u) {
         draw_light(u, d, row + 3);
     }
     draw_command(u);
-    if (!u->unit.card) {
+    if (u->unit.usb) {
+        set_row(u, ROW_CARD, UI_ATTR_WARN, " On USB: eject it on the PC to use it");
+    } else if (!u->unit.card) {
         set_row(u, ROW_CARD, UI_ATTR_WARN, " No SD card");
     } else if (!u->unit.rom) {
         set_row(u, ROW_CARD, UI_ATTR_WARN, " No IDC ROM: the 480Z can't boot");
@@ -213,7 +218,7 @@ static void draw_home(ui_t *u) {
     }
     set_row(u, ROW_CARD + 1, UI_ATTR_NORMAL, "");
     set_row(u, ROW_HELP, UI_ATTR_FAINT,
-            u->request_ready || u->request_in_flight ? " Working..." : " Turn: pick a drive. Press: choose");
+            u->request_ready || u->request_in_flight ? " Working..." : " Turn, press: choose. Hold: settings");
 }
 
 /* ---- choosing ---------------------------------------------------------------------------------------------- */
@@ -320,6 +325,53 @@ static void draw_list(ui_t *u) {
     }
 }
 
+/* ---- settings ---------------------------------------------------------------------------------------------- */
+
+static bool busy(const ui_t *u);
+
+/* The choice shown for an option: the one being picked, the one being saved, or the one in force. */
+static unsigned shown_choice(const ui_t *u, config_item_t item) {
+    if (u->editing && (unsigned)item == u->set_cursor) return u->edit_choice;
+    if (busy(u) && u->request.kind == UI_REQ_SET && u->request.item == item) return u->request.choice;
+    return config_item_get(&u->unit.config, item);
+}
+
+/* The value as shown, in angle brackets while it is being changed. */
+static void shown_value(const ui_t *u, config_item_t item, char *out, size_t cap) {
+    unsigned k = shown_choice(u, item);
+    const char *v = k < config_item_choices(item) ? config_item_choice_label(item, k) : "?";
+    bool edit = u->editing && (unsigned)item == u->set_cursor;
+    snprintf(out, cap, edit ? "<%s>" : "%s", v);
+}
+
+static void draw_settings_rows(ui_t *u) {
+    for (unsigned k = 0; k < list_rows(u); k++) {
+        unsigned row = list_first_row(u) + k, i = u->set_top + k;
+        if (i >= CONFIG_ITEM_COUNT) {
+            set_row(u, row, UI_ATTR_NORMAL, "");
+            continue;
+        }
+        config_item_t item = (config_item_t)i;
+        char value[CONFIG_ITEM_CHOICE_MAX + 3];
+        shown_value(u, item, value, sizeof value);
+        ui_attr_t attr = i == u->set_cursor ? UI_ATTR_CURSOR : UI_ATTR_NORMAL;
+        if (oled(u)) {
+            const char *label = config_item_label(item);
+            set_rowf(u, row, attr, "%s%*s", label, (int)(UI_OLED_COLS - strlen(label)), value);
+        } else {
+            set_rowf(u, row, attr, "  %-*s %s", (int)LABEL_COLS, config_item_label(item), value);
+        }
+    }
+}
+
+static void draw_settings(ui_t *u) {
+    set_row(u, 0, UI_ATTR_TITLE, " Settings");
+    set_rowf(u, 1, UI_ATTR_FAINT, " RMFE.CFG: %s", config_item_key((config_item_t)u->set_cursor));
+    draw_settings_rows(u);
+    set_row(u, ROW_HELP, UI_ATTR_FAINT,
+            u->editing ? " Turn: change. Press: save. Hold: cancel" : " Press: change. Hold: back");
+}
+
 /* ---- the OLED's layouts (ui.h) ------------------------------------------------------------------------------ */
 
 /* A row that scrolls when it is too long: `width` characters of text, from where it has got to since `since`. */
@@ -419,6 +471,10 @@ static void oled_status(ui_t *u) {
             oled_where(u, text, sizeof text);
             set_row(u, row, UI_ATTR_FAINT, text);
         }
+    } else if (u->mode == UI_SETTINGS) {
+        set_row(u, row, UI_ATTR_FAINT, config_item_key((config_item_t)u->set_cursor));
+    } else if (u->unit.usb) {
+        set_row(u, row, UI_ATTR_WARN, "On USB: eject on PC");
     } else if (!u->unit.card) {
         set_row(u, row, UI_ATTR_WARN, "No SD card");
     } else if (!u->unit.rom) {
@@ -442,6 +498,10 @@ static void draw_oled(ui_t *u) {
         case UI_CHOOSE:
             oled_choose(u);
             break;
+        case UI_SETTINGS:
+            if (u->layout == UI_LAYOUT_OLED_64) set_row(u, 0, UI_ATTR_TITLE, "Settings");
+            draw_settings_rows(u);
+            break;
     }
     oled_status(u);
     for (unsigned row = oled_rows(u) + 1u; row < UI_ROWS; row++)
@@ -461,6 +521,9 @@ static void draw(ui_t *u) {
             break;
         case UI_CHOOSE:
             draw_choose(u);
+            break;
+        case UI_SETTINGS:
+            draw_settings(u);
             break;
     }
     if (u->message[0]) {
@@ -486,6 +549,7 @@ static bool busy(const ui_t *u) {
 }
 
 static void request(ui_t *u, ui_request_kind_t kind, unsigned drive, const char *path) {
+    memset(&u->request, 0, sizeof u->request);
     u->request.kind = kind;
     u->request.drive = drive;
     strcpy(u->request.path, path);
@@ -509,6 +573,7 @@ static void open_folder(ui_t *u, const char *folder, const char *select) {
 
 static void go_home(ui_t *u) {
     u->mode = UI_HOME;
+    u->editing = false;
     u->scroll_since = u->now; /* the drive just chosen for shows its cursor, and on the OLED its path scrolls once */
     u->cursor_shown = true;
 }
@@ -523,6 +588,10 @@ static bool wakes_cursor(ui_t *u) {
 }
 
 static void start_choosing(ui_t *u, unsigned drive) {
+    if (u->unit.usb) {
+        say(u, true, "The card is on USB");
+        return;
+    }
     if (busy(u)) {
         say(u, true, "Busy: try again in a moment");
         return;
@@ -590,6 +659,53 @@ static void move_cursor(ui_t *u, int by) {
     u->scroll_since = u->now;
 }
 
+static void open_settings(ui_t *u) {
+    u->mode = UI_SETTINGS;
+    u->set_cursor = 0;
+    u->set_top = 0;
+    u->editing = false;
+}
+
+static void move_setting(ui_t *u, int by) {
+    if (u->editing) {
+        unsigned n = config_item_choices((config_item_t)u->set_cursor);
+        if (by < 0 && u->edit_choice > 0) u->edit_choice--;
+        if (by > 0 && u->edit_choice + 1 < n) u->edit_choice++;
+        return;
+    }
+    if (by < 0 && u->set_cursor > 0) u->set_cursor--;
+    if (by > 0 && u->set_cursor + 1 < CONFIG_ITEM_COUNT) u->set_cursor++;
+    if (u->set_cursor < u->set_top) u->set_top = u->set_cursor;
+    if (u->set_cursor >= u->set_top + list_rows(u)) u->set_top = u->set_cursor - list_rows(u) + 1;
+}
+
+static void press_setting(ui_t *u) {
+    config_item_t item = (config_item_t)u->set_cursor;
+    unsigned now_choice = config_item_get(&u->unit.config, item);
+    if (!u->editing) {
+        if (u->unit.usb && item != CONFIG_ITEM_USB_STORAGE) {
+            say(u, true, "The card is on USB");
+            return;
+        }
+        u->editing = true;
+        u->edit_choice = now_choice < config_item_choices(item) ? now_choice : 0u;
+        return;
+    }
+    if (u->edit_choice == now_choice) {
+        u->editing = false;
+        return;
+    }
+    if (busy(u)) {
+        say(u, true, "Busy: try again in a moment");
+        return;
+    }
+    request(u, UI_REQ_SET, 0, "");
+    u->request.item = item;
+    u->request.choice = u->edit_choice;
+    u->editing = false;
+    say(u, false, "Saving...");
+}
+
 /* ---- the interface ------------------------------------------------------------------------------------------ */
 
 void ui_init(ui_t *u, dirlist_t *list, uint32_t now_ms) {
@@ -599,6 +715,7 @@ void ui_init(ui_t *u, dirlist_t *list, uint32_t now_ms) {
     u->now = now_ms;
     u->last_input = now_ms;
     u->scroll_since = now_ms;
+    config_defaults(&u->unit.config);
     for (unsigned row = 0; row < UI_ROWS; row++)
         u->screen.attr[row] = 0xFF; /* nothing drawn yet: every row is dirty */
     draw(u);
@@ -612,6 +729,7 @@ void ui_set_layout(ui_t *u, ui_layout_t layout) {
         u->screen.attr[row] = 0xFF;
     }
     if (u->cursor >= u->top + list_rows(u)) u->top = u->cursor - list_rows(u) + 1;
+    if (u->set_cursor >= u->set_top + list_rows(u)) u->set_top = u->set_cursor - list_rows(u) + 1;
     draw(u);
 }
 
@@ -650,6 +768,10 @@ void ui_event(ui_t *u, rotary_event_t e, uint32_t now_ms) {
     u->last_input = now_ms;
     switch (u->mode) {
         case UI_HOME:
+            if (e == ROTARY_LONG_PRESS) { /* deliberate, so it needn't wake the cursor first */
+                open_settings(u);
+                break;
+            }
             if (wakes_cursor(u)) break;
             switch (e) {
                 case ROTARY_CW:
@@ -664,6 +786,26 @@ void ui_event(ui_t *u, rotary_event_t e, uint32_t now_ms) {
                     start_choosing(u, u->home_cursor);
                     break;
                 case ROTARY_LONG_PRESS:
+                    break;
+            }
+            break;
+        case UI_SETTINGS:
+            switch (e) {
+                case ROTARY_CW:
+                    move_setting(u, 1);
+                    break;
+                case ROTARY_CCW:
+                    move_setting(u, -1);
+                    break;
+                case ROTARY_PRESS:
+                    press_setting(u);
+                    break;
+                case ROTARY_LONG_PRESS:
+                    if (u->editing) {
+                        u->editing = false;
+                    } else {
+                        go_home(u);
+                    }
                     break;
             }
             break;
@@ -690,7 +832,7 @@ void ui_event(ui_t *u, rotary_event_t e, uint32_t now_ms) {
 void ui_tick(ui_t *u, uint32_t now_ms) {
     RMFE_ASSERT(u);
     u->now = now_ms;
-    if (u->mode == UI_CHOOSE && now_ms - u->last_input >= UI_IDLE_MS) {
+    if (u->mode != UI_HOME && now_ms - u->last_input >= UI_IDLE_MS) {
         go_home(u);
         u->cursor_shown = false; /* not chosen: left */
     }
@@ -753,6 +895,15 @@ void ui_request_done(ui_t *u, bool ok, const char *message, uint32_t now_ms) {
                 say(u, true, "%c: %s", 'A' + (int)d, message ? message : "couldn't empty it");
             }
             break;
+        case UI_REQ_SET: {
+            config_item_t item = u->request.item;
+            if (ok) {
+                say(u, false, "%s: %s", config_item_label(item), config_item_choice_label(item, u->request.choice));
+            } else {
+                say(u, true, "%s", message ? message : "couldn't change it");
+            }
+            break;
+        }
     }
     draw(u);
 }

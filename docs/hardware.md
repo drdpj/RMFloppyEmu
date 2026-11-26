@@ -189,6 +189,7 @@ and 38).
 | GP20 | 26 | TFT `DC` (D/C) |
 | GP21 | 27 | TFT `RESET` |
 | GP22 | 29 | TFT `LED`: backlight, PWM (slice 3, channel A) |
+| GP24 | (on board) | VBUS sense: high while the Pico 2's USB socket has a lead with power in it (`usb-storage`, `docs/sd-card.md`) |
 | GP25 | (on board) | on-board LED |
 | GP26 | 31 | rotary encoder push switch |
 
@@ -273,6 +274,11 @@ module's regulator. The backlight is four LEDs in parallel from 3.3 V through 10
 - **Menu:** `src/core/ui.c` and `src/core/dirlist.c`, driven by knob events and a tick count, tested on the PC.
   Core 1 runs it with the display and the knob; core 0, which owns the link and the card, does what it asks on the
   card a short step at a time between the 480Z's commands (`src/pico/main.c`, `menu_host.c`, `mailbox.c`).
+- **USB storage:** `src/pico/usb_disk.c`, a TinyUSB (the SDK's) mass-storage device on the Pico 2's own USB
+  socket, whose sectors are the SD card's, read and written through the SD driver under FatFs. The card is the
+  PC's or the unit's, never both (`src/core/usb_share.c` decides, `src/pico/menu_host.c` does it); `docs/sd-card.md`,
+  "USB storage". The SDK tells the USB controller VBUS is always there, so an unplugged lead looks like a suspend:
+  GP24, the board's VBUS sense, tells them apart. The device uses pid.codes' test IDs (`1209:0001`) for now.
 - **Images:** each drive presents one track at a time, loaded from the SD card on demand: sectors in rotational
   order, with positions and data. HFE goes through `src/flux` decoding; IMD is parsed and its sectors placed with
   standard IBM gaps. A whole disc (368 KB of data) doesn't fit twice in 520 KB of RAM.
