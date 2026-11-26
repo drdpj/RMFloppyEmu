@@ -227,3 +227,8 @@ The approach is a C reimplementation of the disk unit's command set, with a stag
 
 - **A clean-room process for milestone 8.** The block's specification should be written by one person or agent, and
   the code by another who has never seen the RM block.
+- **A USB product ID of our own, before the project is public.** The USB storage device (`src/pico/usb_disk.c`,
+  `USB_VID`/`USB_PID`) uses pid.codes' test ID, `1209:0001`, meant only for testing. Once the repository is public
+  (pid.codes allocates to open-source hardware, by pull request), apply for a PID and change the two defines.
+  Raspberry Pi also allocates PIDs under `2e8a` for RP2350 products. Nothing depends on the ID: PCs bind their
+  mass-storage driver by the interface's class, and BOOTSEL has the boot ROM's own ID.

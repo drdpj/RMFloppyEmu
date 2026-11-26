@@ -257,6 +257,15 @@ module's regulator. The backlight is four LEDs in parallel from 3.3 V through 10
 0.31 W for the whole module. The 480Z's SIO/4 socket supplies no power. The finished unit needs its own
 5 V (USB is enough).
 
+**The finished unit** runs from one USB lead into the Pico 2's own socket: the Pico's on-board diode takes VBUS to
+VSYS, so VSYS is then an output as well, at about 4.7 V. The TFT stays on VSYS (pin 39) and an OLED on 3V3(OUT)
+(pin 36), so the same wiring works from the probe, from the Pico 2's socket, or from both at once (each supply
+comes through its own diode, so neither feeds the other). A unit only ever powered by its own socket can take the
+TFT from VBUS (pin 40) instead, for the full 5 V, but then the display is dark whenever the Pico 2 is powered any
+other way. Never feed 5 V into VBUS from elsewhere while the socket goes to a PC: it would drive the PC's port. The
+whole unit draws a few hundred mA at most with the TFT lit, within what a USB port gives. On a PC, the same lead
+gives the PC the card if `usb-storage = yes` (`docs/sd-card.md`).
+
 ## Software pieces this needs (milestone 6 in docs/plan.md)
 
 - **SD/FAT:** FatFs, with exFAT enabled as well as FAT32, through carlk3's `no-OS-FatFS-SD-SDIO-SPI-RPi-Pico` (Apache-2.0, and FatFs's BSD-style licence:
