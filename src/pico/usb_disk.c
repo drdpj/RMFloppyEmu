@@ -41,7 +41,7 @@
 #define USB_VID        0x1209u
 #define USB_PID        0x0001u
 #define USB_BCD_DEVICE 0x0100u
-#define USB_MAX_MA     100u
+#define USB_MAX_MA     250u /* the whole unit, TFT lit, from the Pico 2's socket (docs/hardware.md, "Power") */
 #define BLOCK_BYTES    512u
 #define EP_MSC_OUT     0x01u
 #define EP_MSC_IN      0x81u
