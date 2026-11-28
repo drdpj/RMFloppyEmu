@@ -37,6 +37,9 @@ static unsigned nkept;
 static bool present[IDC_PHYS_DRIVES], read_only[IDC_PHYS_DRIVES];
 static uint32_t rot; /* the rotational position the tests choose */
 static unsigned saves;
+static size_t card_work_at[8]; /* how far through the script the unit was at each load and save */
+static unsigned n_card_work;
+static void note_card_work(void);
 
 static uint8_t pattern(unsigned drv, unsigned c, unsigned s, unsigned r, unsigned k) {
     return (uint8_t)(drv * 101u + c * 7u + s * 50u + r * 13u + k);
@@ -94,6 +97,7 @@ static unsigned f_cyls(void *ctx, unsigned drv) {
 }
 static disk_status_t f_load(void *ctx, unsigned drv, unsigned c, unsigned s, disk_track_t *t) {
     (void)ctx;
+    note_card_work();
     if (c >= CYLS) { /* past the disc's last cylinder: blank, as the image backends load it */
         disk_track_clear(t, (uint8_t)c, (uint8_t)s);
         return DISK_OK;
@@ -108,6 +112,7 @@ static disk_status_t f_load(void *ctx, unsigned drv, unsigned c, unsigned s, dis
 }
 static disk_status_t f_save(void *ctx, unsigned drv, const disk_track_t *t) {
     (void)ctx;
+    note_card_work();
     if (read_only[drv]) return DISK_ERR_READ_ONLY;
     memcpy(disc(drv, t->cyl, t->side), t, sizeof *t);
     saves++;
@@ -125,12 +130,18 @@ static idc_t d;
 static fake_in_t script[2048];
 static idc_drive_type_t type_a; /* drive A's type for run() */
 
+static void note_card_work(void) {
+    if (n_card_work < sizeof card_work_at / sizeof card_work_at[0]) card_work_at[n_card_work] = f.pos;
+    n_card_work++;
+}
+
 void setUp(void) {
     nkept = 0;
     present[0] = present[1] = true;
     read_only[0] = read_only[1] = false;
     rot = 0;
     saves = 0;
+    n_card_work = 0;
     type_a = IDC_DRIVE_FOLLOW_IMAGE;
 }
 void tearDown(void) {}
@@ -284,6 +295,29 @@ static void test_moving_to_another_track_writes_the_changed_one_back(void) {
     run(n);
     TEST_ASSERT_EQUAL_UINT(1, saves);
     TEST_ASSERT_EQUAL_HEX8(0x11, disc(0, 9, 0)->data[disc(0, 9, 0)->secs[0].data_off]);
+}
+
+/*
+ * The real 480Z sends a record's 128 bytes straight after the unit accepts the parameters, without waiting for
+ * the unit's CTS, so card work between the two overflows the Pico's 32-byte FIFO and loses most of the record
+ * (issue #1: 12.6 ms writing back track 37 and loading track 38, measured on the link, 2026-11-28). The record
+ * has to be in before the card is touched.
+ */
+static void test_a_write_takes_its_record_before_any_card_work(void) {
+    uint8_t rec[128];
+    memset(rec, 0x5A, sizeof rec);
+    size_t n = cmd(0, 0x04, 0x20, 9, 1);
+    n = fake_bytes(script, n, rec, 128); /* track 9 cached, and changed */
+    size_t second = cmd(n, 0x04, 0x20, 10, 1);
+    n = fake_bytes(script, second, rec, 128); /* track 9 written back, track 10 loaded */
+    run(n);
+    TEST_ASSERT_EQUAL_UINT(3, n_card_work); /* load 9; save 9, load 10 */
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(4 + 128, card_work_at[0], "load of track 9 before its record was in");
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(n, card_work_at[1], "save of track 9 before the second record was in");
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(n, card_work_at[2], "load of track 10 before its record was in");
+    const uint8_t want[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(want, f.out, sizeof want);
+    TEST_ASSERT_EQUAL_UINT(sizeof want, f.nout);
 }
 
 static void test_write_protected_disc_reports_41_on_flush(void) {
@@ -843,6 +877,7 @@ int main(void) {
     RUN_TEST(test_an_80_track_drive_takes_tracks_past_a_40_track_disc);
     RUN_TEST(test_write_goes_to_the_cache_and_reaches_the_disc_on_flush);
     RUN_TEST(test_moving_to_another_track_writes_the_changed_one_back);
+    RUN_TEST(test_a_write_takes_its_record_before_any_card_work);
     RUN_TEST(test_write_protected_disc_reports_41_on_flush);
     RUN_TEST(test_a_failed_write_back_loses_the_change);
     RUN_TEST(test_a_write_back_error_on_a_track_change_is_the_reads_result);

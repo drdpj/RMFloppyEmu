@@ -63,4 +63,8 @@ void link_uart_set_idle(void (*fn)(void));
  * called from either core. */
 void link_uart_print_log(void);
 
+/* Prints the link's last 512 bytes, both ways, with their times and error flags, and for each received byte how
+ * long core 0 was away from the UART while it waited for it (link_uart.c). For the console. */
+void link_uart_print_trace(void);
+
 #endif

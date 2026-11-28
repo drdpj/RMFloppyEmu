@@ -176,6 +176,9 @@ static void console_key(uint32_t ms) {
         case 'k': /* the link's last exchanges */
             link_uart_print_log();
             break;
+        case 't': /* the link's last bytes */
+            link_uart_print_trace();
+            break;
         case 'c': /* show-commands, until the next start */
             ui_set_options(&ui, !ui.show_commands);
             break;

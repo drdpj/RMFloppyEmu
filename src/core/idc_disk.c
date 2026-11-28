@@ -174,9 +174,8 @@ typedef struct {
 
 /*
  * Reads drive, track and record, then sends the status byte [IDC3 0f08]: 80 not ready, 20 bad track;
- * a record out of range is answered 20 at once [IDC3 0f2b]. Then, as the IDC goes to its cache only after
- * the status [IDC3 0f2e, then 10ba/108f], gets the track: an error there is the command's result, not its
- * status (rw->track_status). Returns LINK_OK with *go set when the command may proceed.
+ * a record out of range is answered 20 at once [IDC3 0f2b]. Returns LINK_OK with *go set when the command may
+ * proceed; the caller then gets the track with rw_find_track().
  */
 static link_status_t rw_params(idc_t *d, rw_t *rw, bool *go) {
     *go = false;
@@ -198,17 +197,23 @@ static link_status_t rw_params(idc_t *d, rw_t *rw, bool *go) {
     if (ok && (rw->record == 0 || rw->record > records)) return link_put(&d->link, IDC_STATUS_BAD_PARAM);
     st = link_put(&d->link, d->sticky);
     *go = st == LINK_OK && d->sticky == IDC_STATUS_OK;
-    if (!*go) return st;
+    return st;
+}
 
+/*
+ * Gets the track and finds the sector, as the IDC goes to its cache only after the status [IDC3 0f2e, then
+ * 10ba/108f]: an error there is the command's result, not its status (rw->track_status). This is card work, which
+ * can take tens of milliseconds, so a write calls it only once its record is in (idc_cmd_write).
+ */
+static void rw_find_track(idc_t *d, rw_t *rw) {
     rw->t = NULL;
     rw->idx = -1;
     rw->track_status = get_track(d, rw->tg.phys, rw->track, rw->tg.side, &rw->t);
-    if (rw->track_status != IDC_STATUS_OK) return LINK_OK;
+    if (rw->track_status != IDC_STATUS_OK) return;
     uint8_t id = rw->record;
     rw->offset = 0;
     if (!rw->by_id) id = record_sector(rw->record, rw->track, rw->tg.mfm, &rw->offset);
     rw->idx = disk_track_find(rw->t, id, d->drives->position(d->drives->ctx, rw->tg.phys));
-    return LINK_OK;
 }
 
 /* Result of reaching the sector: 00, or the WD1793 status a real read/write would give. */
@@ -238,6 +243,7 @@ link_status_t idc_cmd_read(idc_t *d) {
     bool go;
     link_status_t st = rw_params(d, &rw, &go);
     if (st != LINK_OK || !go) return st;
+    rw_find_track(d, &rw);
     uint8_t res = sector_status(&rw, false);
     st = link_put(&d->link, res);
     if (st != LINK_OK || res != IDC_STATUS_OK) return st;
@@ -270,9 +276,13 @@ link_status_t idc_cmd_write(idc_t *d) {
     bool go;
     link_status_t st = rw_params(d, &rw, &go);
     if (st != LINK_OK || !go) return st;
+    /* The record first: the 480Z sends it straight after the status, without waiting for CTS (issue #1, the
+     * real 480Z, 2026-11-28), so card work before it would overrun the UART's FIFO. The 480Z sees no difference:
+     * the result comes after the record either way. */
     uint8_t rec[LINK_RECORD];
     st = link_recv_record(&d->link, rec);
     if (st != LINK_OK) return st;
+    rw_find_track(d, &rw);
     if (rw.track_status != IDC_STATUS_OK) return link_put(&d->link, rw.track_status);
 
     idc_cache_t *c = &d->cache[rw.tg.phys];
@@ -339,6 +349,7 @@ link_status_t idc_cmd_read_id(idc_t *d) {
     bool go;
     link_status_t st = rw_params(d, &rw, &go);
     if (st != LINK_OK || !go) return st;
+    rw_find_track(d, &rw);
     uint8_t res = sector_status(&rw, false);
     st = link_put(&d->link, res);
     if (st != LINK_OK || res != IDC_STATUS_OK) return st;
@@ -360,6 +371,7 @@ link_status_t idc_cmd_write_id(idc_t *d) {
     bool go;
     link_status_t st = rw_params(d, &rw, &go);
     if (st != LINK_OK || !go) return st;
+    rw_find_track(d, &rw);
     /* Block count: from the sector when it exists, else from the format (FM 1, MFM 4). */
     unsigned blocks = rw.idx >= 0 ? rw.t->secs[rw.idx].size / LINK_RECORD : blocks_per_sector(rw.t, rw.tg.mfm);
     st = link_put(&d->link, (uint8_t)blocks);

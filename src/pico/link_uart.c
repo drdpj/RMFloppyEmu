@@ -69,6 +69,7 @@ typedef struct {
     uint32_t fast_baud;         /* that rate */
     uint32_t dtr_waits;         /* times a byte had to wait for the 480Z's DTR */
     uint32_t dtr_wait_max_us;   /* the longest of those waits */
+    uint32_t rx_overruns;       /* bytes the 480Z sent that were lost because the receive FIFO was full */
     uint8_t first_rx[4];        /* its first bytes from the 480Z: the command */
 } exchange_t;
 
@@ -76,6 +77,39 @@ typedef struct {
 static exchange_t exchanges[EXCHANGES];
 static volatile unsigned exchange_now; /* the index of the current one */
 static uint32_t sending_at;            /* the rate now: lu_set_baud(), core 0 */
+
+/*
+ * The link's last bytes, both ways, for link_uart_print_trace(): when each was taken or started, its error flags,
+ * and for a byte received, the longest time core 0 was away from the UART while it waited for it with the 480Z's
+ * CTS up. That is how long the 480Z could send unheard: more than the FIFO's 32 bytes' worth (2.6 ms at 125000)
+ * loses bytes. Written by core 0 only; read by the console on core 1, which may see an entry mid-update.
+ */
+typedef struct {
+    uint32_t t_us;
+    uint16_t away_us; /* saturates */
+    uint8_t byte;
+    uint8_t flags;
+} trace_t;
+
+#define TRACE_TX      0x01u
+#define TRACE_PE      0x02u /* parity error */
+#define TRACE_FE      0x04u /* framing error */
+#define TRACE_BE      0x08u /* break */
+#define TRACE_OE      0x10u /* bytes were lost just before this one: the FIFO was full */
+#define TRACE_RESET   0x20u /* not a byte: the 480Z's RTS reset */
+#define TRACE_ENTRIES 512u
+
+static trace_t trace[TRACE_ENTRIES];
+static volatile uint32_t trace_count; /* entries ever written */
+
+static void __not_in_flash_func(trace_add)(uint8_t byte, uint8_t flags, uint32_t away_us) {
+    trace_t *t = &trace[trace_count % TRACE_ENTRIES];
+    t->t_us = time_us_32();
+    t->away_us = away_us > UINT16_MAX ? UINT16_MAX : (uint16_t)away_us;
+    t->byte = byte;
+    t->flags = flags;
+    trace_count++;
+}
 
 static void __not_in_flash_func(exchange_begin)(void) {
     unsigned k = (exchange_now + 1u) % EXCHANGES;
@@ -157,6 +191,7 @@ static bool __not_in_flash_func(take_reset)(void) {
     reset_pending = false;
     restore_interrupts(irq);
     if (!pending) return false;
+    trace_add(0, TRACE_RESET, 0);
     exchange_begin();
     reprogram(0, true);
     uart_hw_t *hw = uart_get_hw(LINK_UART);
@@ -168,6 +203,7 @@ static bool __not_in_flash_func(take_reset)(void) {
 static link_status_t __not_in_flash_func(lu_recv)(void *ctx, uint8_t *byte, bool *parity_error) {
     (void)ctx;
     uart_hw_t *hw = uart_get_hw(LINK_UART);
+    uint32_t last_poll = time_us_32(), away = 0;
     for (;;) {
         /* CTS goes up only if no reset is pending: rts_irq() can't then be overtaken. */
         uint32_t irq = save_and_disable_interrupts();
@@ -178,19 +214,31 @@ static link_status_t __not_in_flash_func(lu_recv)(void *ctx, uint8_t *byte, bool
             (void)take_reset();
             return LINK_RESET;
         }
+        uint32_t now = time_us_32();
+        if (now - last_poll > away) away = now - last_poll;
         if (!(hw->fr & UART_UARTFR_RXFE_BITS)) {
             set_line(LINK_UART_PIN_CTS_OUT, false);
             uint32_t dr = hw->dr;
             *byte = (uint8_t)(dr & UART_UARTDR_DATA_BITS);
             *parity_error = (dr & UART_UARTDR_PE_BITS) != 0;
             exchange_t *x = &exchanges[exchange_now];
+            uint8_t flags =
+                (uint8_t)((*parity_error ? TRACE_PE : 0u) | (dr & UART_UARTDR_FE_BITS ? TRACE_FE : 0u) |
+                          (dr & UART_UARTDR_BE_BITS ? TRACE_BE : 0u) | (dr & UART_UARTDR_OE_BITS ? TRACE_OE : 0u));
+            if (hw->rsr & UART_UARTRSR_OE_BITS) {
+                flags |= TRACE_OE;
+                hw->rsr = 0; /* clears it, so each overrun is seen once */
+            }
+            if (flags & TRACE_OE) x->rx_overruns++;
+            trace_add(*byte, flags, away);
             if (x->rx < sizeof x->first_rx) x->first_rx[x->rx] = *byte;
             x->rx++;
             if (*parity_error) x->rx_parity++;
             x->last_us = time_us_32();
             return LINK_OK;
         }
-        if (idle_fn) idle_fn(); /* with CTS up: a byte arriving meanwhile waits in the FIFO */
+        if (idle_fn) idle_fn();   /* with CTS up: a byte arriving meanwhile waits in the FIFO */
+        last_poll = time_us_32(); /* the idle work is counted out: it runs only between commands */
     }
 }
 
@@ -214,6 +262,7 @@ static link_status_t __not_in_flash_func(lu_send)(void *ctx, uint8_t byte) {
         bool dtr = line_asserted(LINK_UART_PIN_DTR_IN);
         if (dtr && !(hw->fr & UART_UARTFR_BUSY_BITS)) {
             hw->dr = byte;
+            trace_add(byte, TRACE_TX, 0);
             if (paced && paced_sent++ == 0) {
                 paced_drops = dtr_drops;
                 paced_from_us = time_us_32();
@@ -329,8 +378,8 @@ void link_uart_print_log(void) {
         if (!x->start_us) continue; /* never used */
         bool current = (newest + i) % EXCHANGES == newest;
         uint32_t end = current ? now : exchanges[(newest + i + 1u) % EXCHANGES].start_us;
-        printf("LINK %s: in %lu (%lu bad parity) [", current ? "now " : "past", (unsigned long)x->rx,
-               (unsigned long)x->rx_parity);
+        printf("LINK %s: in %lu (%lu bad parity, %lu overruns) [", current ? "now " : "past", (unsigned long)x->rx,
+               (unsigned long)x->rx_parity, (unsigned long)x->rx_overruns);
         for (unsigned k = 0; k < x->rx && k < sizeof x->first_rx; k++)
             printf(k ? " %02X" : "%02X", x->first_rx[k]);
         printf("] out %lu (%lu fast, at %lu), DTR waits %lu (longest %lu us), lasted %lu ms, quiet %lu ms at the %s\n",
@@ -339,4 +388,28 @@ void link_uart_print_log(void) {
                (unsigned long)((end - x->start_us) / 1000u), (unsigned long)((end - x->last_us) / 1000u),
                current ? "moment" : "end");
     }
+}
+
+void link_uart_print_trace(void) {
+    uint32_t end = trace_count;
+    uint32_t first = end > TRACE_ENTRIES ? end - TRACE_ENTRIES : 0u;
+    printf("TRACE: the link's last %lu bytes (< from the 480Z, > to it); +us since the one before; away: the longest "
+           "time core 0 was away from the UART, with CTS up, while it waited for that byte\n",
+           (unsigned long)(end - first));
+    uint32_t prev = 0;
+    for (uint32_t i = first; i < end; i++) {
+        const trace_t *t = &trace[i % TRACE_ENTRIES];
+        uint32_t dt = i == first ? 0u : t->t_us - prev;
+        prev = t->t_us;
+        if (t->flags & TRACE_RESET) {
+            printf("%5lu +%8lu RESET\n", (unsigned long)i, (unsigned long)dt);
+        } else if (t->flags & TRACE_TX) {
+            printf("%5lu +%8lu >%02X\n", (unsigned long)i, (unsigned long)dt, t->byte);
+        } else {
+            printf("%5lu +%8lu <%02X away %5u%s%s%s%s\n", (unsigned long)i, (unsigned long)dt, t->byte, t->away_us,
+                   t->flags & TRACE_OE ? " OVERRUN" : "", t->flags & TRACE_PE ? " PARITY" : "",
+                   t->flags & TRACE_FE ? " FRAMING" : "", t->flags & TRACE_BE ? " BREAK" : "");
+        }
+    }
+    printf("TRACE: end; now %lu us after the last\n", (unsigned long)(time_us_32() - prev));
 }

@@ -156,10 +156,16 @@ modules powered at 3.3 V (or one MAX3243); the wiring is in `docs/hardware.md`.
   - Through the link the 480Z sent two bytes with bad parity: its first `00` after power-up and its first `FF`
     after going fast, each the first byte after it reprograms its baud rate (it may be MAME's emulation; the
     IDC takes a command byte whatever its parity, so either way it does no harm).
-- **The unit receives through the UART's 32-byte FIFO only** (`src/pico/link_uart.c`): its CTS is down while it
-  works on the card (writing a track back, loading one), and a sender that ignores CTS can overrun it. The 480Z
-  waits for CTS and for each answer, so it never does; a test script playing the 480Z must do the same
-  (`tests/hil/run_mame_linked.py`, `send_paced`).
+- **The unit receives through the UART's 32-byte FIFO only** (`src/pico/link_uart.c`), 2.6 ms at 125000. Its CTS
+  is down while it works on the card, but **the real 480Z doesn't wait for it**: it sends a write's 128-byte record
+  straight after the unit accepts the parameters (real 480Z, ROS 1.2D, through the bench's lead and transceivers,
+  2026-11-28, issue #1). The unit once loaded the next track there, for 12.6 ms with CTS down, and the 480Z sent
+  the record meanwhile; 32 bytes reached the FIFO, the other 96 were lost, and both sides hung. So the unit never
+  works on the card between an answer and data the 480Z sends without waiting for another byte: a write takes its
+  record first (`idc_cmd_write`). Elsewhere the 480Z waits for a byte from the unit before it sends, and that byte
+  comes after the card work. Why CTS doesn't hold it off is open: the boot block's driver sets the 480Z's SIO to
+  auto enables (WR3 `E1`, from its table at FB66), which should ("Open questions", "The 480Z side"). A test script
+  playing the 480Z still waits for CTS (`tests/hil/run_mame_linked.py`, `send_paced`), as MAME's 480Z does.
 
 ## Command layer
 
@@ -510,7 +516,8 @@ emptied. The PL011 can't abort the character it is shifting out, so that one byt
 its RTS. The unit is back at 9600 and receiving within 50 us of RTS; the SDK's own UART calls would leave the
 receiver off for 1.6 ms. A byte is started only while the 480Z's DTR is asserted and the transmitter is idle, which is the transmit half
 of auto enables: the SIO checks CTS as each character starts. The receive half (ignoring bytes while the 480Z's RTS is down) is **not**
-reproduced. The 480Z sends only when the unit asserts CTS, and dropping a byte wrongly would hang the exchange.
+reproduced: dropping a byte wrongly would hang the exchange. The real 480Z doesn't wait for CTS before a write's
+record ("Flow control"), so CTS can't be relied on to hold it off.
 Whether the 480Z ever sends with RTS down is an open question.
 
 ## Open questions
@@ -593,6 +600,11 @@ Whether the 480Z ever sends with RTS down is an open question.
       disc call that the CP/M BIOS makes with IX at a parameter block, goes to the driver), its own receive
       interrupt in the SIO's vectors (FC14, FC16), and a hook for the ROS's `B` and `X` commands (FF39). The driver
       takes received bytes into a 256-byte ring at E000, over the stub.
+- [ ] **Why the real 480Z sends with the unit's CTS down** (2026-11-28, issue #1). Its disc driver sets channel B's
+      WR3 to `E1`, auto enables, so its transmitter should wait for CTS. Yet it sent a whole record while the Pico
+      held CTS (GP6, through the transceiver to socket pin 5) deasserted for 12.6 ms. Possibilities: socket pin 5
+      doesn't reach the 480Z's CTS on this lead, the level there doesn't follow GP6, or the SIO sends anyway. To check
+      with a meter: socket pin 5 while the unit works on the card. The unit no longer depends on it.
 - [x] **The 480Z side: its timeouts** (2026-11-24, from ROS 1.2D, its CP/M BIOS and IDC 3.1's boot block). Only
       the ROS has one, and only while it loads the boot block: each byte, from the go-fast reply to the checksum,
       gets 256 calls of its "is a byte waiting?" service (2F) [ROS 1.2D 3eea–3ef2 for the first, 078e for the
