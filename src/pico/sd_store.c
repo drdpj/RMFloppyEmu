@@ -37,6 +37,7 @@
 
 #include "ff.h"
 #include "hw_config.h"
+#include "sd_card.h"
 
 #define CELL_BYTES   16384u /* one HFE track side's cells (core/disk_image.h) */
 #define TEXT_MAX     2048u  /* the most of a configuration file read */
@@ -417,6 +418,12 @@ static void warn(void *ctx, unsigned line, const char *why) {
 }
 
 bool sd_store_mount(void) {
+    /* The card is set up afresh (CMD0, ACMD41: as at power-up) at every mount, not just the first. After the PC has
+     * had it over USB, the driver would otherwise carry on with the card as the PC's session left it, and every
+     * one-sector write then took 118 ms instead of 1.9 ms: a save of a track 2.3 s instead of 0.13 s (issue #1,
+     * 2026-11-28; why the card does that isn't known). A mount happens only at start-up and between commands. */
+    sd_card_t *sd = sd_get_by_num(0);
+    if (sd) sd->state.m_Status |= STA_NOINIT;
     FRESULT fr = f_mount(&fs, "", 1);
     if (fr != FR_OK) {
         printf("SD: no card, or it can't be read (FatFs %d)\n", fr);
